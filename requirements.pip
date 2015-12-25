@@ -1,0 +1,8 @@
+virtualenv
+tornado
+debug
+#pymongo
+#jsonpickle
+#PIL
+#cachetools
+#PyYAML
