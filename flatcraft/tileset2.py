@@ -1,10 +1,12 @@
 
 from collections import Counter
 from StringIO import StringIO
+import pickle
 
 
 LAYER_SIZE = 4
 LAYER_NAMES = list('qrts')
+NODE_CODE = 0xFF
 
 PATH_CHARS_MAP = dict(zip(
     map(str, range(LAYER_SIZE)) + LAYER_NAMES,
@@ -27,11 +29,28 @@ class Node(list):
             if isinstance(item, Node) or item is not x:
                 return False
         return True
+    
+    def _load(self, stream):
+        while self:
+            self.pop()
+        for i in xrange(LAYER_SIZE):
+            v = ord(stream.read(1))
+            if v == NODE_CODE:
+                v = Node()
+                v._load(stream)
+            self.append(v)
+
+    def remap(self, d):
+        for i, item in enumerate(self):
+            if isinstance(item, Node):
+                item.remap(d)
+            else:
+                self[i] = d[item]
 
     def save(self, colors, stream=None):
         out = stream or StringIO()
         
-        out.write(chr(0xff))
+        out.write(chr(NODE_CODE))
         for item in self:
             if isinstance(item, Node):
                 item.save(colors, stream=out)
@@ -73,6 +92,26 @@ class Q3(object):
     def __init__(self, value=None):
         self.root = value
 
+    def remap(self, d):
+        root = self.root
+        if isinstance(root, Node):
+            root.remap(d)
+        else:
+            self.root = d[root]
+
+    def load(self, stream):
+        v = stream.read(1)
+        if v == chr(NODE_CODE):
+            self.root = Node()
+            self.root._load(stream)
+        else:
+            self.root = v
+
+        rest = stream.read()
+        print '-->', len(rest)
+        colors = pickle.loads(rest)
+        self.remap(colors)
+            
     def save(self, stream=None):
         colors = {}
         if isinstance(self.root, Node):
@@ -82,11 +121,13 @@ class Q3(object):
             res = chr(0)
             if stream:
                 stream.write(res)
-            
+
+        colors = {v: k for k, v in colors.items()}  # inversed key-value pairs
+        meta = pickle.dumps(colors)
         if stream:
-            stream.write(repr(colors))
+            stream.write(meta)
         else:
-            res += repr(colors)
+            res += meta
         return res
 
     def get(self, path):
@@ -142,7 +183,7 @@ if __name__ == '__main__':
     #print repr(q.root.save(d)).replace('\\x', ' ')
     deep = 16
     w = 2 ** (deep - 1)
-    n = 100000
+    n = 1000
 
     print 'Gen {n} in field {size}:\t'.format(size=w * 2, **locals()),
     for i in xrange(n):
@@ -153,3 +194,10 @@ if __name__ == '__main__':
     with open('test.ts', 'wb') as f:
         q.save(stream=f)
     print 'done'
+
+    qq = Q3()
+    with open('test.ts', 'rb') as f:
+        qq.load(f)
+
+    with open('test2.ts', 'wb') as f:
+        qq.save(stream=f)
