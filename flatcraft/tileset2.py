@@ -1,4 +1,3 @@
-
 from collections import Counter
 
 LAYER_SIZE = 4
@@ -25,6 +24,18 @@ class Node(list):
             if isinstance(item, Node) or item is not x:
                 return False
         return True
+
+    def write2stream(self, stream, colors):
+        stream.write(chr(0xff))
+        for item in self:
+            if isinstance(item, Node):
+                item.write2stream(stream, colors)
+            else:
+                code = colors.get(item)
+                if code is None:
+                    code = max(colors.values() + [-1]) + 1
+                    colors[item] = code
+                stream.write(chr(code))
 
     def get(self, path):
         if not path:
@@ -53,9 +64,6 @@ class Node(list):
 class Q3(object):
     def __init__(self, value=None):
         self.root = value
-
-    def is_mono(self):
-        return not self.root is Node or self.root.is_mono()
 
     def get(self, path):
         path = normalize_path(path)
@@ -91,7 +99,18 @@ class Q3(object):
     __getitem__ = get
     __setitem__ = set
 
+
+class TestStream(object):
+    def write(self, buf):
+        for c in buf:
+            print >>sys.stderr, ord(c),
+
+
 if __name__ == '__main__':
+    import sys
     q = Q3()
     q['qq'] = 1
     print 'q =', q
+
+    d = {}
+    q.root.write2stream(TestStream(), d)
