@@ -1,4 +1,7 @@
+
 from collections import Counter
+from StringIO import StringIO
+
 
 LAYER_SIZE = 4
 LAYER_NAMES = list('qrts')
@@ -25,17 +28,22 @@ class Node(list):
                 return False
         return True
 
-    def write2stream(self, stream, colors):
-        stream.write(chr(0xff))
+    def save(self, colors, stream=None):
+        out = stream or StringIO()
+        
+        out.write(chr(0xff))
         for item in self:
             if isinstance(item, Node):
-                item.write2stream(stream, colors)
+                item.save(colors, stream=out)
             else:
                 code = colors.get(item)
                 if code is None:
                     code = max(colors.values() + [-1]) + 1
                     colors[item] = code
-                stream.write(chr(code))
+                out.write(chr(code))
+
+        if stream is None:
+            return out.getvalue()
 
     def get(self, path):
         if not path:
@@ -64,6 +72,22 @@ class Node(list):
 class Q3(object):
     def __init__(self, value=None):
         self.root = value
+
+    def save(self, stream=None):
+        colors = {}
+        if isinstance(self.root, Node):
+            res = self.root.save(colors, stream=stream)
+        else:
+            colors[self.root] = 0
+            res = chr(0)
+            if stream:
+                stream.write(res)
+            
+        if stream:
+            stream.write(repr(colors))
+        else:
+            res += repr(colors)
+        return res
 
     def get(self, path):
         path = normalize_path(path)
@@ -108,9 +132,24 @@ class TestStream(object):
 
 if __name__ == '__main__':
     import sys
+    from tileid import Tileid
+    from random import gauss, choice
     q = Q3()
-    q['qq'] = 1
+    #q['qq'] = 1
     print 'q =', q
 
     d = {}
-    q.root.write2stream(TestStream(), d)
+    #print repr(q.root.save(d)).replace('\\x', ' ')
+    deep = 16
+    w = 2 ** (deep - 1)
+    n = 100000
+
+    print 'Gen {n} in field {size}:\t'.format(size=w * 2, **locals()),
+    for i in xrange(n):
+        q[Tileid(int(gauss(w, w / 6)), int(gauss(w, w / 6)), deep)] = choice('abcdefghij')
+
+    print 'done'
+    print 'Save:\t',
+    with open('test.ts', 'wb') as f:
+        q.save(stream=f)
+    print 'done'
