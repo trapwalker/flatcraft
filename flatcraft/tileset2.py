@@ -86,11 +86,12 @@ class Node(list):
 
     def __repr__(self):
         return '<{}>'.format(', '.join(map(repr, self)))
-        
+
 
 class Q3(object):
-    def __init__(self, value=None):
+    def __init__(self, value=None, level=None):
         self.root = value
+        self.level = level
 
     def remap(self, d):
         root = self.root
@@ -134,10 +135,10 @@ class Q3(object):
         path = normalize_path(path)
 
         root = self.root
-        if not path or not isinstance(root, Node):
-            return root
-        else:
-            return root.get(path)
+        res = root if not path or not isinstance(root, Node) else root.get(path)
+        if isinstance(root, Node):
+            res = Q3(res, level=None if self.level is None else (self.level - len(path)))
+        return res
 
     def set(self, path, value):
         path = normalize_path(path)
@@ -160,6 +161,9 @@ class Q3(object):
 
     def __delitem__(self, path):
         self[path] = None
+
+    def __eq__(self, other):
+        return (self.level == other.level or self.level is None or other.level is None) and self.root == other.root
         
     __getitem__ = get
     __setitem__ = set
@@ -201,3 +205,5 @@ if __name__ == '__main__':
 
     with open('test2.ts', 'wb') as f:
         qq.save(stream=f)
+
+    print 'Eq:', q == qq
