@@ -1,4 +1,4 @@
-
+﻿
 from collections import Counter
 from StringIO import StringIO
 import pickle
@@ -102,6 +102,15 @@ class Q3(object):
         self.root = value
         self.level = level
 
+    # todo: Инициализация статистики
+    # todo: Инкрементальная статистика:
+    # todo:   текущая максимальная глубина
+    # todo:   текущее количество узлов
+    # todo:   текущее количество листьев
+    # todo:   частотный словарь цветов листьев
+    # todo:   частотный словарь цветов тайлов
+    
+
     def remap(self, d, errors='strict', default=None):
         root = self.root
         if isinstance(root, Node):
@@ -109,6 +118,7 @@ class Q3(object):
             if root.is_mono():
                 self.root = root[0]
         else:
+            # todo: реализовать подстановку по результату callback-функции
             if errors == 'strict':
                 self.root = d[root]
             elif errors == 'skip':
