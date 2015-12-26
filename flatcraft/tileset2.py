@@ -40,12 +40,21 @@ class Node(list):
                 v._load(stream)
             self.append(v)
 
-    def remap(self, d):
+    def remap(self, d, errors='strict', default=None):
         for i, item in enumerate(self):
             if isinstance(item, Node):
-                item.remap(d)
+                item.remap(d, errors=errors, default=default)
+                if item.is_mono():
+                    self[i] = item[0]
             else:
-                self[i] = d[item]
+                if errors == 'strict':
+                    self[i] = d[item]
+                elif errors == 'skip':
+                    self[i] = d.get(item, item)
+                elif errors == 'default':
+                    self[i] = d.get(item, default)
+                else:
+                    raise ValueError('Unknown errors handle method ("strinct", "skip" or "default" required).')
 
     def save(self, colors, stream=None):
         out = stream or StringIO()
@@ -93,12 +102,21 @@ class Q3(object):
         self.root = value
         self.level = level
 
-    def remap(self, d):
+    def remap(self, d, errors='strict', default=None):
         root = self.root
         if isinstance(root, Node):
-            root.remap(d)
+            root.remap(d, errors=errors, default=default)
+            if root.is_mono():
+                self.root = root[0]
         else:
-            self.root = d[root]
+            if errors == 'strict':
+                self.root = d[root]
+            elif errors == 'skip':
+                self.root = d.get(root, root)
+            elif errors == 'default':
+                self.root = d.get(root, default)
+            else:
+                raise ValueError('Unknown errors handle method ("strinct", "skip" or "default" required).')
 
     def load(self, stream):
         v = stream.read(1)
@@ -109,7 +127,6 @@ class Q3(object):
             self.root = v
 
         rest = stream.read()
-        print '-->', len(rest)
         colors = pickle.loads(rest)
         self.remap(colors)
             
@@ -169,22 +186,13 @@ class Q3(object):
     __setitem__ = set
 
 
-class TestStream(object):
-    def write(self, buf):
-        for c in buf:
-            print >>sys.stderr, ord(c),
-
-
 if __name__ == '__main__':
     import sys
     from tileid import Tileid
     from random import gauss, choice
     q = Q3()
-    #q['qq'] = 1
     print 'q =', q
 
-    d = {}
-    #print repr(q.root.save(d)).replace('\\x', ' ')
     deep = 16
     w = 2 ** (deep - 1)
     n = 1000
