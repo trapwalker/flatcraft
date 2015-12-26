@@ -75,7 +75,7 @@ class Node(list):
 
     def get(self, path):
         if not path:
-            return Q3(self)  # todo: cover to Q3
+            return Q3(self)  # todo: cover to Q3 (проверить правильность)
         node = self[path[0]]
         return node.get(path[1:]) if isinstance(node, Node) else node
     
@@ -94,14 +94,22 @@ class Node(list):
         return self.is_mono()
 
     def __repr__(self):
+        # todo: Обезопасить метод от слишком длинного результата
+        # todo: Выдавать статистику вместо данных
         return '<{}>'.format(', '.join(map(repr, self)))
 
 
 class Q3(object):
+    # todo: Документировать классы и методы
+    # todo: Doctesting
     def __init__(self, value=None, level=None):
         self.root = value
         self.level = level
 
+    # todo: реализовать метод редукции дерева по уровню с callback-функцией замены узлов
+    # todo: метод __len__ должен возвращать количество узлов+листьев дерева
+    # todo: реализовать итератор по листьям или узлам не глубже заданного уровня. Узлы возвращать в виде поддеревьев.
+    # todo: реализовать итератор по листьям (__iter__) методом обхода дерева в глубину
     # todo: Инициализация статистики
     # todo: Инкрементальная статистика:
     # todo:   текущая максимальная глубина
@@ -109,7 +117,6 @@ class Q3(object):
     # todo:   текущее количество листьев
     # todo:   частотный словарь цветов листьев
     # todo:   частотный словарь цветов тайлов
-    
 
     def remap(self, d, errors='strict', default=None):
         root = self.root
