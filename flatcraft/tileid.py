@@ -189,6 +189,21 @@ class Tileid(long):
             self._qrts = bin2str(self)
         return self._qrts
 
+    def x(self):
+        if not hasattr(self, '_x'):
+            self._x, self._y, self._z = bin2xyz(self)
+        return self._x
+
+    def y(self):
+        if not hasattr(self, '_y'):
+            self._x, self._y, self._z = bin2xyz(self)
+        return self._y
+
+    def z(self):
+        if not hasattr(self, '_z'):
+            self._x, self._y, self._z = bin2xyz(self)
+        return self._z
+
     def xyz(self):
         u"""Представление индекса в виде кортежа (x, y, zoom)."""
         if not hasattr(self, '_x'):
