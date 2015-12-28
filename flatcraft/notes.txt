@@ -1,0 +1,75 @@
+﻿Python 2.7.6 (default, Nov 10 2013, 19:24:18) [MSC v.1500 32 bit (Intel)] on win32
+Type "copyright", "credits" or "license()" for more information.
+>>> 
+>>> 
+>>> def get_rect_tester(x1, y1, x2, y2):
+	def test(tile):
+		pass
+	return test
+
+>>> for path in iter_fill(get_rect_tester(3,5, 11,13)):
+	pass
+
+
+Traceback (most recent call last):
+  File "<pyshell#9>", line 1, in <module>
+    for path in iter_fill(get_rect_tester(3,5, 11,13)):
+NameError: name 'iter_fill' is not defined
+>>> def iter_fill(ftest, t=Tile(0, 0, 0)):
+	r = ftest(t)
+	if r == 2:
+		yield t
+	elif t == 1:
+		chain(
+			iter_fill(ftest, t)
+			iter_fill(ftest, t)
+			
+SyntaxError: invalid syntax
+>>> def iter_fill(ftest, t=Tile(0, 0, 0)):
+	r = ftest(t)
+	if r == 2:
+		yield t
+	elif t == 1:
+		for tt in chain(
+			iter_fill(ftest, t[0]),
+			iter_fill(ftest, t[1]),
+			iter_fill(ftest, t[2]),
+			iter_fill(ftest, t[3])
+		):
+		yield tt
+		
+  File "<pyshell#28>", line 12
+    yield tt
+        ^
+IndentationError: expected an indented block
+>>> 
+>>> 
+>>> 
+>>> def f(x):
+	def g(y):
+		print x, y, x+y
+
+		
+>>> def f(x):
+	def g(y):
+		print x, '+',  y, '=', x+y
+
+		
+>>> def f(x):
+	def g(y):
+		print x, '+',  y, '=', x+y
+	return g
+
+>>> a = f(3)
+>>> a
+<function g at 0x02BF4330>
+>>> a(5)
+3 + 5 = 8
+>>> a(7)
+3 + 7 = 10
+>>> a3 = f(3)
+>>> a5 = f(5)
+>>> 
+>>> f(5)(7)
+5 + 7 = 12
+>>> 
