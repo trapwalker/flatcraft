@@ -27,6 +27,9 @@ def iter_fill(ftest, tile=Tileid(0, 0, 0), deep=16):
     r = ftest(tile, deep)
     if r == 2:
         yield tile
+    # rodo: Нужно сделать ограничение максимальной глубины детализации.
+    # Если пиксел пересек область заливки, но не попал в неё полностью, нужно его детализировать
+    # только если он не глубже заданной максимальной глубины.
     elif r == 1:
         for c in tile.childs():
             for t in iter_fill(ftest, c):
@@ -38,3 +41,4 @@ if __name__ == '__main__':
 
     for t in iter_fill(tester):
         print t
+        print 
