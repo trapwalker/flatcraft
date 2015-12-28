@@ -6,12 +6,13 @@ from tileid import Tileid
 
 def test_tile_rect(x1, y1, x2, y2):
     def test(tile, deep):
-        delta = deep - tile.z + 1
+        x, y, z = tile.xyz()
+        delta = deep - z + 1
 
-        t_x1 = tile.x * delta
-        t_y1 = tile.y * delta
-        t_x2 = (tile.x + 1) * delta
-        t_y2 = (tile.y + 1) * delta
+        t_x1 = x * delta
+        t_y1 = y * delta
+        t_x2 = (x + 1) * delta
+        t_y2 = (y + 1) * delta
 
         if (x2 < t_x1) or (x1 > t_x2) or (y2 < t_y1) or (y1 > t_y2):
             return 0
@@ -22,14 +23,18 @@ def test_tile_rect(x1, y1, x2, y2):
     return test
 
 
-def iter_fill(ftest, tile=Tileid(0,0,0), deep=16):
+def iter_fill(ftest, tile=Tileid(0, 0, 0), deep=16):
     r = ftest(tile, deep)
     if r == 2:
         yield tile
     elif r == 1:
-        chain(
-            iter_fill(ftest, tile.childs()),
-            iter_fill(ftest, tile.childs()),
-            iter_fill(ftest, tile.childs()),
-            iter_fill(ftest, tile.childs())
-        )
+        for c in tile.childs():
+            for t in iter_fill(ftest, c):
+                yield t
+
+
+if __name__ == '__main__':
+    tester = test_tile_rect(100, 100, 200, 200)
+
+    for t in iter_fill(tester):
+        print t
