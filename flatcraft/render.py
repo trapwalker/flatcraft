@@ -21,14 +21,14 @@ def test_tile_rect(x1, y1, x2, y2):
 
         if (x2 < t_x1) or (x1 > t_x2) or (y2 < t_y1) or (y1 > t_y2):
             return 0
-        if (x1 > t_x1) and (x2 < t_x2) and (y1 > t_y1) and (y2 < t_y2):
+        if (x1 < t_x1) and (x2 > t_x2) and (y1 < t_y1) and (y2 > t_y2):
             return 2
         return 1
 
     return test
 
 
-def iter_fill(ftest, tile=Tileid(0, 0, 0), deep=16):
+def iter_fill(ftest, tile=Tileid(0, 0, 0), deep=4):
     r = ftest(tile, deep)
     if r == 2:
         yield tile
@@ -42,8 +42,8 @@ def iter_fill(ftest, tile=Tileid(0, 0, 0), deep=16):
 
 
 if __name__ == '__main__':
-    tester = test_tile_rect(100, 100, 200, 200)
+    tester = test_tile_rect(10, 10, 20, 20)
 
     for t in iter_fill(tester):
         print t
-        print 
+        print
