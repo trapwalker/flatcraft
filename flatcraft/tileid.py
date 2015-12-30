@@ -199,11 +199,6 @@ class Tileid(long):
             self._x, self._y, self._z = bin2xyz(self)
         return self._y
 
-    def z(self):
-        if not hasattr(self, '_z'):
-            self._x, self._y, self._z = bin2xyz(self)
-        return self._z
-
     def xyz(self):
         u"""Представление индекса в виде кортежа (x, y, zoom)."""
         if not hasattr(self, '_x'):
@@ -217,6 +212,8 @@ class Tileid(long):
             #noinspection PyAttributeOutsideInit
             self._x, self._y, self._z = bin2xyz(self)
         return self._z
+
+    z = zoom
 
     def __mod__(self, depth):
         u"""Возвращает хвост пути длиной depth."""
@@ -249,6 +246,14 @@ class Tileid(long):
 
     def __str__(self):
         return self.qrts()
+
+    def get_deep_rect(self, abs_depth):
+        z = self.z()
+        assert abs_depth >= z
+        dz = abs_depth - z
+        ax, ay, _ = self.child(0, 0, dz).xyz()
+        w = 2 ** dz
+        return ax, ay, ax + w, ay + w
 
 
 ROOT = Tileid()
