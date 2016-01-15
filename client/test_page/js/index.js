@@ -1,37 +1,57 @@
-DICT = ['red', 'yellow', 'blue', 'green', 'black', 'orange', 'purple'];
-BASE_COLOR = "rgb(155, 155, 255)";
+(function() {
 
-function load_tree(stream, callback, w, x, y) {
-  // todo: Пробрасывать глубину узла от корня
-  x = (x==undefined)?0:x;
-  y = (y==undefined)?0:y;
-  var node = stream();
-  if (node == NC) {
-    // todo: Добавить коллбэк on_node
-    w /= 2;
-    load_tree(stream, callback, w, x    , y    );
-    load_tree(stream, callback, w, x + w, y);
-    load_tree(stream, callback, w, x, y + w);
-    load_tree(stream, callback, w, x + w, y + w);    
+  var COLOR_MAP = {
+     'r': 'red'
+    ,'y': 'yellow'
+    ,'b': 'blue'
+    ,'g': 'green'
+    ,'k': 'black'
+    ,'o': 'orange'
+    ,'p': 'purple'
+    ,'.': null
   }
-  else {
-    // todo: Переиеновать коллбэк в on_leaf
-    callback(node, w, x, y);
+  var BASE_COLOR = "rgb(155, 155, 255)";
+
+  var workfield;
+  var main_canvas;
+  var main_ctx;
+  var tiles_storage = {};
+
+  function init() {
+    workfield = document.getElementById('workfield');
+    main_canvas = document.getElementById('render');
+    main_ctx = main_canvas.getContext('2d');
+    
+    (function() {
+      for(i = 0; i <= 1; i++) {
+        for(j = 0; j <= 1; j++) {
+          var canvas = document.createElement('canvas');
+          canvas.width  = 256;
+          canvas.height = 256;
+          fillCanvas(canvas.getContext('2d'), 256, TEST_TREE_DATA1[i][j]);
+          row.push(canvas);
+        }
+        container.push(row);
+      }
+    })()
   }
-}
 
 function fillCanvas(ctx, w, data) 
 {
   function leaf_func(color, w, x, y) 
   {
-    print(color + ", [" + x + ", " + y + "], " + w);
-    rect(x, y, w, DICT[color - 1])
+    c = COLOR_MAP[color];
+    print(color + ", [" + x + ", " + y + "], " + w + " - " + c);
+    if (c === undefined) {
+      print('Unknown color: "' + color + '"');
+    } else if (c !== null) {
+      rect(x, y, w, c);
+    }
   }
   
   function rect(x1, y1, w, color) 
   {
-    color = color || BASE_COLOR;
-    ctx.fillStyle = color; 
+    ctx.fillStyle = color;
     ctx.fillRect(x1, y1, w, w);
   }
   
@@ -70,7 +90,7 @@ document.getElementById('render').onclick = function()
 }
 
 
-
+/*
     // Event Listeners
 
     function resize(e) {
@@ -88,4 +108,5 @@ document.getElementById('render').onclick = function()
         grad.addColorStop(0, 'rgba(0, 0, 0, 0)');
         grad.addColorStop(1, 'rgba(0, 0, 0, 0.35)');
     }
-
+/**/
+})();
