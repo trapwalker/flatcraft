@@ -31,3 +31,4 @@ deploy/python/
 *.pid
 .hgrc
 local.*.conf
+*.ts
