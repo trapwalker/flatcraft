@@ -21,20 +21,6 @@ var data = [
   [NC, NC, NC, 6, 3, 3, 6, NC, 6, 3, 3, 6, NC, 6, 3, 3, 6, NC, 6, 3, 3, 6, NC, NC, 6, 3, 3, 6, NC, 6, 3, 3, 6, NC, 6,   3, 3, 6, NC, 6, 3, 3, 6, NC, NC, 6, 3, 3, 6, NC, 6, 3, 3, 6, NC, 6, 3, 3, 6, NC, 6, 3, 3, 6, NC, NC, 6, 3, 3, 6, NC,   6, 3, 3, 6, NC, 6, 3, 3, 6, NC, 6, 3, 3, 6]]
 ];
 
-function Iter(array) {
-  var idx = 0;
-  function iterator() {
-    idx += 1;
-    return array[idx - 1];
-  }
-  return iterator;
-}
-
-function print(text) {
-  var con = document.getElementById("console");
-  if (con) con.innerHTML += '<p>'+text+'</p>';
-}
-
 function load_tree(stream, callback, w, x, y) {
   // todo: Пробрасывать глубину узла от корня
   x = (x==undefined)?0:x;
@@ -102,3 +88,24 @@ document.getElementById('render').onclick = function()
   }
   else x = 0;
 }
+
+
+
+    // Event Listeners
+
+    function resize(e) {
+        screenWidth  = canvas.width  = window.innerWidth;
+        screenHeight = canvas.height = window.innerHeight;
+        bufferCvs.width  = screenWidth;
+        bufferCvs.height = screenHeight;
+        context   = canvas.getContext('2d');
+        bufferCtx = bufferCvs.getContext('2d');
+
+        var cx = canvas.width * 0.5,
+            cy = canvas.height * 0.5;
+
+        grad = context.createRadialGradient(cx, cy, 0, cx, cy, Math.sqrt(cx * cx + cy * cy));
+        grad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0.35)');
+    }
+

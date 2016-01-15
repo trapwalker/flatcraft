@@ -8,7 +8,7 @@
   overflow: scroll;
 }
 
-#render {
+#workfield {
   display : block;
   position : absolute;
   top : 0;
@@ -16,4 +16,14 @@
   /*margin : 20px;*/
   height : 100%;
   width: 80%;
+}
+
+
+#render {
+  display : block;
+  position : absolute;
+  top : 0;
+  left : 0;
+  height : 100%;
+  width: 100%;
 }
