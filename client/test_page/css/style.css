@@ -1,8 +1,19 @@
+#console {
+  display : block;
+  position : absolute;
+  top : 0;
+  left : 0;
+  height : 100%;
+  width : 20%;
+  overflow: scroll;
+}
+
 #render {
   display : block;
   position : absolute;
-  top : 50%;
-  left : 50%;
-  margin-top : -256px;
-  margin-left : -256px;
+  top : 0;
+  left : 20%;
+  /*margin : 20px;*/
+  height : 100%;
+  width: 80%;
 }
