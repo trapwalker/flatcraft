@@ -13,17 +13,14 @@
   position : absolute;
   top : 0;
   left : 20%;
-  /*margin : 20px;*/
   height : 100%;
   width: 80%;
+  overflow : hidden;
 }
-
 
 #render {
   display : block;
   position : absolute;
   top : 0;
   left : 0;
-  height : 100%;
-  width: 100%;
 }
