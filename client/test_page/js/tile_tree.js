@@ -29,12 +29,17 @@ function TileCache(src) {
     return x + ':' + y;
   })
 
-  obj.onLoad() = (function(x, y) {
+  obj.cleanFar = (function(radius, center) {  // Удаление тайлов, находящизся далле чем в radius от точки center
+    // todo: realize
+  })
+
+  obj.onLoad = (function(x, y) {
     // todo: realize
     return {data: '.'}
   })
 
   obj.getCanvas = (function(x, y) {
+    // todo: Проверить допустимые границы карты (>=0, <256)
     var key = obj.makeKey(x, y);
     var tile = this.tiles[key];
     if (tile === undefined) {
