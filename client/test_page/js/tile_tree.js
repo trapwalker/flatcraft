@@ -1,5 +1,4 @@
-﻿
-function load_tree(stream, callback, ctx, w, x, y) {
+﻿function load_tree(stream, callback, ctx, w, x, y) {
   // todo: Пробрасывать глубину узла от корня
   x = (x===undefined)?0:x;
   y = (y===undefined)?0:y;
@@ -19,6 +18,16 @@ function load_tree(stream, callback, ctx, w, x, y) {
   }
 }
 
+function leafFunction(ctx, color, w, x, y) {
+  c = COLOR_MAP[color];
+  print(color + ", [" + x + ", " + y + "], " + w + " - " + c);
+  if (c === undefined) {
+    print('Unknown color: "' + color + '"');
+  } else if (c !== null) {
+    ctx.fillStyle = c;
+    ctx.fillRect(x, y, w, w);
+  }
+}
 
 function TileCache(src) {
   src = (src===undefined)?{}:src;
@@ -55,7 +64,5 @@ function TileCache(src) {
       load_tree(tile.data, leafFunction, ctx);  // Перенести сюда leafFunction
     }
     return canvas;
-    
   })
-
 }
