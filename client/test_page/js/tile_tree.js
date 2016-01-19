@@ -69,7 +69,8 @@ function TileCache(src) {
       img.onload = function() {
           ctx.drawImage(img, 0, 0);
       }
-      img.src = 'http://icongal.com/gallery/image/177122/star.png';
+      //img.src = 'http://icongal.com/gallery/image/177122/star.png';
+      img.src = "images/xkcd/1n8w.png"
       
       //load_tree(tile.data, leafFunction, ctx);  // Перенести сюда leafFunction
     }
