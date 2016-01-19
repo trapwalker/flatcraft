@@ -2,7 +2,7 @@
   // todo: Пробрасывать глубину узла от корня
   x = (x===undefined)?0:x;
   y = (y===undefined)?0:y;
-  w = (w===undefined)?256:w;  // todo: Вынести размер тайла в константы
+  w = (w===undefined)?CHUNK_SIZE:w;
   var node = stream();
   if (node == NC) {
     // todo: Добавить коллбэк on_node
@@ -49,7 +49,7 @@ function TileCache(src) {
   })
 
   obj.getCanvas = (function(x, y) {
-    // todo: Проверить допустимые границы карты (>=0, <256)
+    // todo: Проверить допустимые границы карты (>=0, <256?)
     var key = obj.makeKey(x, y);
     var tile = this.tiles[key];
     if (tile === undefined) {
