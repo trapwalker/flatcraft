@@ -23,10 +23,10 @@
       //Тестовые данные для отображения:
       main_ctx.fillStyle = BASE_COLOR;
       main_ctx.fillRect(0, 0, main_canvas.width, main_canvas.height);
-      var offset_x = Math.floor(wx / CHUNK_SIZE);
-      var offset_y = Math.floor(wy / CHUNK_SIZE);
-      for (var i = offset_x; i < offset_x + (main_canvas.width / CHUNK_SIZE | 0); i++)
-        for (var j = offset_y; j < offset_y + (main_canvas.height / CHUNK_SIZE | 0); j++) {
+      var offset_x = -Math.floor(wx / CHUNK_SIZE)/256;
+      var offset_y = -Math.floor(wy / CHUNK_SIZE)/256;
+      for (var i = offset_x - 1; i < offset_x + (main_canvas.width / CHUNK_SIZE | 0) + 1; i++)
+        for (var j = offset_y - 1; j < offset_y + (main_canvas.height / CHUNK_SIZE | 0) + 1; j++) {
           var tile = cache.getCanvas(i, j);
           main_ctx.drawImage(tile, i*CHUNK_SIZE + (wx % CHUNK_SIZE) + dx, j*CHUNK_SIZE + (wy % CHUNK_SIZE) + dy);
         }
