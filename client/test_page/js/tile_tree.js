@@ -62,14 +62,15 @@ function TileCache(src) {
       this.tiles[key] = tile;
     }
     
-    var canvas = tile.canvas;    
+    var canvas = tile.canvas;
     if (canvas === undefined) {
-      tile.canvas = document.createElement('canvas');  // todo: Вынести размер тайла в константы
-      tile.canvas.width = CHUNK_SIZE;
-      tile.canvas.height = CHUNK_SIZE;
-      var ctx = tile.canvas.getContext("2d");      
+      canvas = document.createElement('canvas');  // todo: Вынести размер тайла в константы
+      canvas.width = CHUNK_SIZE;
+      canvas.height = CHUNK_SIZE;
+      var ctx = canvas.getContext("2d");      
 
       load_tree(Iter(tile.data), leafFunction, ctx);  // Перенести сюда leafFunction
+      tile.canvas = canvas
       /*
       var img = new Image(CHUNK_SIZE, CHUNK_SIZE);
       img.onload = function() {
@@ -79,7 +80,7 @@ function TileCache(src) {
       img.src = "images/xkcd/1n8w.png";
       /**/
     }
-    return tile.canvas;
+    return canvas;
   })
 
   return obj;
