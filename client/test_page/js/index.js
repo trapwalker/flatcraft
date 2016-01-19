@@ -11,7 +11,7 @@
     main_canvas.height = workfield.clientHeight;
     main_canvas.width = workfield.clientWidth;
     main_ctx = main_canvas.getContext('2d');
-    cache = TileCache('qwe');
+    cache = TileCache(TILES_AS_TREE);
 
     function repaint() {
       //Тестовые данные для отображения:

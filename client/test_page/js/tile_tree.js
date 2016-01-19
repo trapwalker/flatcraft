@@ -20,7 +20,7 @@
 
 function leafFunction(ctx, color, w, x, y) {
   c = COLOR_MAP[color];
-  print(color + ", [" + x + ", " + y + "], " + w + " - " + c);
+  //print(color + ", [" + x + ", " + y + "], " + w + " - " + c);
   if (c === undefined) {
     print('Unknown color: "' + color + '"');
   } else if (c !== null) {
@@ -56,20 +56,24 @@ function TileCache(src) {
       tile = this.onLoad(x, y);
       this.tiles[key] = tile;
     }
-    var canvas = tile.canvas;
+    
+    var canvas = tile.canvas;    
     if (canvas === undefined) {
-      canvas = document.createElement('canvas');  // todo: Вынести размер тайла в константы
-      canvas.width = CHUNK_SIZE;
-      canvas.height = CHUNK_SIZE;
-      var ctx = canvas.getContext('2d');
-      //test: Временно заменим обход дерева на готовый рисунок
       var img = new Image(CHUNK_SIZE, CHUNK_SIZE);
+      
+      tile.canvas = document.createElement('canvas');  // todo: Вынести размер тайла в константы
+      tile.canvas.width = CHUNK_SIZE;
+      tile.canvas.height = CHUNK_SIZE;
+      var ctx = tile.canvas.getContext("2d");      
+      
+      img.onload = function() {
+          ctx.drawImage(img, 0, 0);
+      }
       img.src = 'http://icongal.com/gallery/image/177122/star.png';
-      ctx.drawImage(img, 0, 0);
-      tile.canvas = canvas;
+      
       //load_tree(tile.data, leafFunction, ctx);  // Перенести сюда leafFunction
     }
-    return canvas;
+    return tile.canvas;
   })
 
   return obj;
