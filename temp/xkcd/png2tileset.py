@@ -17,11 +17,16 @@ SHIFT_Y = 32
 TS_BLACK = Q3(0)
 TS_WHITE = Q3(1)
 
+class WrongTileFileName(Exception):
+    pass
+
 
 def fn2xy(fn):
     fn = os.path.split(fn)[-1]
     f, ext = os.path.splitext(fn)
     match = re.match('(\d+)([sn])(\d+)([ew])', f.lower())
+    if match is None:
+        raise WrongTileFileName(fn)
     lat, sn, lon, ew = match.groups()
     lat = int(lat)
     lon = int(lon)
@@ -66,7 +71,7 @@ def iter_files(path=TILES_PATH):
         try:            
             x, y = fn2xy(f)
             yield f, solid, (x, y), (i, count)
-        except NameError:
+        except WrongTileFileName:
             if 'white' in f:
                 solid = 'white'
             elif 'black' in f:
