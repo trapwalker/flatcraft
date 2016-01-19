@@ -1,4 +1,5 @@
 
+import re
 import os
 import sys
 import Image
@@ -15,6 +16,18 @@ SHIFT_X = 50
 SHIFT_Y = 32
 TS_BLACK = Q3(0)
 TS_WHITE = Q3(1)
+
+
+def fn2xy(fn):
+    fn = os.path.split(fn)[-1]
+    f, ext = os.path.splitext(fn)
+    match = re.match('(\d+)([sn])(\d+)([ew])', f.lower())
+    lat, sn, lon, ew = match.groups()
+    lat = int(lat)
+    lon = int(lon)
+    x = lon if ew == 'e' else (1 - lon)
+    y = lat if sn == 'n' else (1 - lat)
+    return x, y
 
 
 def xy2fn(x, y, path=TILES_PATH):
@@ -42,6 +55,26 @@ def iter_tiles(path=TILES_PATH, lines=xrange(-32, 32), columns=xrange(-50, 50)):
         for x in columns:
             yield xy2fn(x, y, path=path) + ((x, y), (i, count))
             i += 1
+
+
+def iter_files(path=TILES_PATH):
+    files = glob.glob(os.path.join(path, '*.png'))
+    count = len(files)
+
+    for i, f in enumerate(files):
+        solid = None
+        try:            
+            x, y = fn2xy(f)
+            yield f, solid, (x, y), (i, count)
+        except NameError:
+            if 'white' in f:
+                solid = 'white'
+            elif 'black' in f:
+                solid = 'black'
+            else:
+                count -= 1
+
+            yield f, solid, (x, y), (i, count)
     
 
 def img2ts(img):
@@ -57,8 +90,11 @@ def gen_tilesets(src=TILES_PATH, dest=TS_DEST_PATH, clean_dest=False):
         for f in files:
             os.remove(f)
         print 'old files removed'
+
+    iterator = iter_files
+    #iterator = iter_tiles
     
-    for fn, solid, (x, y), (i, count) in iter_tiles(path=src):
+    for fn, solid, (x, y), (i, count) in iterator(path=src):
         x = x + SHIFT_X
         y = y + SHIFT_Y
         ts_fn = os.path.join(dest, '{x:03},{y:03}.ts'.format(x=x, y=y))
