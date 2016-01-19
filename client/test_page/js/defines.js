@@ -8,6 +8,8 @@ var COLOR_MAP = {
     ,'o': 'orange'
     ,'p': 'purple'
     ,'.': null
+    ,'0': 'black'
+    ,'1': 'white'
 }
 var BASE_COLOR = "rgb(155, 155, 255)";
 var CHUNK_SIZE = 2048;//256;

@@ -1,16 +1,21 @@
-﻿function load_tree(stream, callback, ctx, w, x, y) {
+﻿
+function load_tree(stream, callback, ctx, w, x, y) {
+  //print('load start w='+w+', x='+x+', y='+y);  
   // todo: Пробрасывать глубину узла от корня
   x = (x===undefined)?0:x;
   y = (y===undefined)?0:y;
   w = (w===undefined)?CHUNK_SIZE:w;
   var node = stream();
-  if (node == NC) {
+  if (node == NC && w > 1) {
     // todo: Добавить коллбэк on_node
     w /= 2;
+    //print('node='+node+', w='+w);  
+  
     load_tree(stream, callback, ctx, w, x    , y    );
-    load_tree(stream, callback, ctx, w, x + w, y);
-    load_tree(stream, callback, ctx, w, x, y + w);
-    load_tree(stream, callback, ctx, w, x + w, y + w);    
+    load_tree(stream, callback, ctx, w, x + w, y    );
+    load_tree(stream, callback, ctx, w, x,     y + w);
+    load_tree(stream, callback, ctx, w, x + w, y + w);
+   
   }
   else {
     // todo: Переиеновать коллбэк в on_leaf
@@ -59,20 +64,20 @@ function TileCache(src) {
     
     var canvas = tile.canvas;    
     if (canvas === undefined) {
-      var img = new Image(CHUNK_SIZE, CHUNK_SIZE);
-      
       tile.canvas = document.createElement('canvas');  // todo: Вынести размер тайла в константы
       tile.canvas.width = CHUNK_SIZE;
       tile.canvas.height = CHUNK_SIZE;
       var ctx = tile.canvas.getContext("2d");      
-      
+
+      load_tree(Iter(tile.data), leafFunction, ctx);  // Перенести сюда leafFunction
+      /*
+      var img = new Image(CHUNK_SIZE, CHUNK_SIZE);
       img.onload = function() {
           ctx.drawImage(img, 0, 0);
       }
       //img.src = 'http://icongal.com/gallery/image/177122/star.png';
-      img.src = "images/xkcd/1n8w.png"
-      
-      //load_tree(tile.data, leafFunction, ctx);  // Перенести сюда leafFunction
+      img.src = "images/xkcd/1n8w.png";
+      /**/
     }
     return tile.canvas;
   })
