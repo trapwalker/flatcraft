@@ -50,7 +50,8 @@ function TileCache(src) {
 
   obj.onLoad = (function(x, y) {
     // todo: realize
-    return {data: '...'}
+    //print('xy='+x + ', '+y);
+    return {data: BIG_TILE}
   })
 
   obj.getCanvas = (function(x, y) {
