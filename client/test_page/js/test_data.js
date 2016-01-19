@@ -32,5 +32,3 @@ var TILES_AS_TREE = {
     '1:1': {data: "+++pkkp+pkkp+pkkp+pkkp++pkkp+pkkp+pkkp+pkkp++pkkp+pkkp+pkkp+pkkp++pkkp+pkkp+pkkp+pkk6"}
 }
 
-var TEST_IMG_DATA = {}
-

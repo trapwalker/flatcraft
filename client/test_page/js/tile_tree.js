@@ -56,23 +56,26 @@ function TileCache(src) {
       tile = this.onLoad(x, y);
       this.tiles[key] = tile;
     }
-    
-    var canvas = tile.canvas;    
+
+    var canvas = tile.canvas;
     if (canvas === undefined) {
       var img = new Image(CHUNK_SIZE, CHUNK_SIZE);
       
-      tile.canvas = document.createElement('canvas');  // todo: Вынести размер тайла в константы
-      tile.canvas.width = CHUNK_SIZE;
-      tile.canvas.height = CHUNK_SIZE;
-      var ctx = tile.canvas.getContext("2d");      
+      canvas = document.createElement('canvas');
+      canvas.width = CHUNK_SIZE;
+      canvas.height = CHUNK_SIZE;
+      var ctx = canvas.getContext("2d");
       
       img.onload = function() {
-          ctx.drawImage(img, 0, 0);
+        ctx.drawImage(img, 0, 0);
       }
-      img.src = 'http://icongal.com/gallery/image/177122/star.png';
-      
-      //load_tree(tile.data, leafFunction, ctx);  // Перенести сюда leafFunction
+
+      img.src = 'images/star.png';
+      tile.canvas = canvas;
+
+      //load_tree(tile.data, leafFunction, ctx);
     }
+
     return tile.canvas;
   })
 
