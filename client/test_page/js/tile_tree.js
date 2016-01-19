@@ -38,13 +38,13 @@ function TileCache(src) {
     return x + ':' + y;
   })
 
-  obj.cleanFar = (function(radius, center) {  // Удаление тайлов, находящизся далле чем в radius от точки center
+  obj.cleanFar = (function(radius, center) {  // Удаление тайлов, находящихся далле чем в radius от точки center
     // todo: realize
   })
 
   obj.onLoad = (function(x, y) {
     // todo: realize
-    return {data: '.'}
+    return {data: '...'}
   })
 
   obj.getCanvas = (function(x, y) {
@@ -58,11 +58,19 @@ function TileCache(src) {
     var canvas = tile.canvas;
     if (canvas === undefined) {
       canvas = document.createElement('canvas');  // todo: Вынести размер тайла в константы
-      canvas.width = 256;
-      canvas.height = 256;
+      canvas.width = CHUNK_SIZE;
+      canvas.height = CHUNK_SIZE;
       var ctx = canvas.getContext('2d');
-      load_tree(tile.data, leafFunction, ctx);  // Перенести сюда leafFunction
+      //test: Временно заменим обход дерева на готовый рисунок
+      img = new Image(CHUNK_SIZE, CHUNK_SIZE);
+      img.src = 'http://icongal.com/gallery/image/177122/star.png';
+      ctx.drawImage(img, 0, 0);
+      tile.canvas = canvas;
+      this.tiles[key] = tile;
+      //load_tree(tile.data, leafFunction, ctx);  // Перенести сюда leafFunction
     }
     return canvas;
   })
+
+  return obj;
 }
