@@ -32,7 +32,8 @@ function leafFunction(ctx, color, w, x, y) {
 function TileCache(src) {
   src = (src===undefined)?{}:src;
 
-  var obj = {tiles: src}
+  var obj = new Object();
+  obj.tiles = src;
 
   obj.makeKey = (function(x, y) {
     return x + ':' + y;
@@ -62,11 +63,10 @@ function TileCache(src) {
       canvas.height = CHUNK_SIZE;
       var ctx = canvas.getContext('2d');
       //test: Временно заменим обход дерева на готовый рисунок
-      img = new Image(CHUNK_SIZE, CHUNK_SIZE);
+      var img = new Image(CHUNK_SIZE, CHUNK_SIZE);
       img.src = 'http://icongal.com/gallery/image/177122/star.png';
       ctx.drawImage(img, 0, 0);
       tile.canvas = canvas;
-      this.tiles[key] = tile;
       //load_tree(tile.data, leafFunction, ctx);  // Перенести сюда leafFunction
     }
     return canvas;
