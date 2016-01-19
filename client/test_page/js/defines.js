@@ -10,5 +10,5 @@ var COLOR_MAP = {
     ,'.': null
 }
 var BASE_COLOR = "rgb(155, 155, 255)";
-var CHUNK_SIZE = 2048;//256;
+var CHUNK_SIZE = 256;
 var PRELOAD_CHUNKS = 2;
