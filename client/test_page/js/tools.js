@@ -1,5 +1,4 @@
-﻿var log_counter = 0;
-
+﻿
 function Iter(array) {
   var idx = 0;
   function iterator() {
@@ -13,7 +12,7 @@ function print(text) {
   var con = document.getElementById("console");
   if (con) {
     con.innerHTML += '<p>'+text+'</p>';
-    log_counter++;
+    print.log_counter++;
     if (log_counter > LOG_ITEMS_COUNT) {
       con.removeChild(con.firstChild);
     }
@@ -21,3 +20,4 @@ function print(text) {
   }
 }
 
+print.log_counter = 0;

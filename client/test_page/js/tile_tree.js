@@ -1,6 +1,5 @@
 ﻿
 function load_tree(stream, callback, ctx, w, x, y) {
-  //print('load start w='+w+', x='+x+', y='+y);  
   // todo: Пробрасывать глубину узла от корня
   x = (x===undefined)?0:x;
   y = (y===undefined)?0:y;
@@ -9,13 +8,10 @@ function load_tree(stream, callback, ctx, w, x, y) {
   if (node == NC && w > 1) {
     // todo: Добавить коллбэк on_node
     w /= 2;
-    //print('node='+node+', w='+w);  
-  
     load_tree(stream, callback, ctx, w, x    , y    );
     load_tree(stream, callback, ctx, w, x + w, y    );
     load_tree(stream, callback, ctx, w, x,     y + w);
     load_tree(stream, callback, ctx, w, x + w, y + w);
-   
   }
   else {
     // todo: Переиеновать коллбэк в on_leaf
@@ -25,9 +21,8 @@ function load_tree(stream, callback, ctx, w, x, y) {
 
 function leafFunction(ctx, color, w, x, y) {
   c = COLOR_MAP[color];
-  //print(color + ", [" + x + ", " + y + "], " + w + " - " + c);
   if (c === undefined) {
-    print('Unknown color: "' + color + '"');
+    console.warning('Unknown color: "' + color + '"');
   } else if (c !== null) {
     ctx.fillStyle = c;
     ctx.fillRect(x, y, w, w);
@@ -49,9 +44,8 @@ function TileCache(src) {
   })
 
   obj.onLoad = (function(x, y) {
-    // todo: realize
-    //print('xy='+x + ', '+y);
-    return {data: BIG_TILE}
+    console.log('load x='+x+', '+y);
+    return {data: '0'}
   })
 
   obj.getCanvas = (function(x, y) {
@@ -65,19 +59,22 @@ function TileCache(src) {
     
     var canvas = tile.canvas;
     if (canvas === undefined) {
+      //console.log('render xy=['+x + ', '+y+'] '+tile.data.length);
       canvas = document.createElement('canvas');  // todo: Вынести размер тайла в константы
       canvas.width = CHUNK_SIZE;
       canvas.height = CHUNK_SIZE;
-      var ctx = canvas.getContext("2d");      
+      var ctx = canvas.getContext("2d");
 
-      //load_tree(Iter(tile.data), leafFunction, ctx);  // Перенести сюда leafFunction
+      load_tree(Iter(tile.data), leafFunction, ctx);  // Перенести сюда leafFunction
 
+      /*
       var img = new Image(CHUNK_SIZE, CHUNK_SIZE);
       img.onload = function() {
           ctx.drawImage(img, 0, 0);
       }
 
       img.src = "images/star.png";
+      /**/
 
       tile.canvas = canvas
     }

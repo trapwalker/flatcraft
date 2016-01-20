@@ -54,9 +54,7 @@
 
     document.addEventListener('mouseup', function(e) {
       movement_flag = 0;
-      //print('offset_x = ' + Math.floor(wx / CHUNK_SIZE));
-      //print('offset_y = ' + Math.floor(wy / CHUNK_SIZE));
-      //print('-----------------------------------------');
+      console.log('pos='+wx+', '+wy);
     });
 
     window.onresize = function resize() {

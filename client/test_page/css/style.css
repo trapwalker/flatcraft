@@ -1,20 +1,10 @@
-#console {
-  display : block;
-  position : absolute;
-  top : 0;
-  left : 80%;
-  height : 100%;
-  width : 20%;
-  overflow: scroll;
-}
-
 #workfield {
   display : block;
   position : absolute;
   top : 0;
   left : 0;
   height : 100%;
-  width: 80%;
+  width: 100%;
   overflow : hidden;
 }
 
