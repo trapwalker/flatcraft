@@ -13,5 +13,5 @@ var COLOR_MAP = {
     ,'+': 'green'
 }
 var BASE_COLOR = "rgb(155, 155, 255)";
-var CHUNK_SIZE = 256;
+var CHUNK_SIZE = 2048;
 var LOG_ITEMS_COUNT = 100;
