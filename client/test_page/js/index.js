@@ -7,6 +7,7 @@
   var wx; //world x
   var wy; //world y
   var movement_flag;
+  var c;
 
   function init() {
     workfield = document.getElementById('workfield');
@@ -15,21 +16,36 @@
     main_canvas.width = workfield.clientWidth;
     main_ctx = main_canvas.getContext('2d');
     movement_flag = 0;
-    wx = 0;
-    wy = 0;
+    //wx = 0; wy = 0;
+    wx = 53 * CHUNK_SIZE; wy = 34 * CHUNK_SIZE;
     cache = TileCache(TILES_AS_TREE);
+
+    c = new Vector(0, 0);
+    c = new Vector(53 * CHUNK_SIZE, 34 * CHUNK_SIZE);
+    console.log('c='+c+', ' +CHUNK_SIZE);
 
     function repaint() {
       //Тестовые данные для отображения:
+      var w = main_canvas.width;
+      var h = main_canvas.height;
+
       main_ctx.fillStyle = BASE_COLOR;
-      main_ctx.fillRect(0, 0, main_canvas.width, main_canvas.height);
-      var offset_x = -Math.floor(wx / CHUNK_SIZE)/CHUNK_SIZE;
-      var offset_y = -Math.floor(wy / CHUNK_SIZE)/CHUNK_SIZE;
-      for (var i = offset_x - 1; i < offset_x + (main_canvas.width / CHUNK_SIZE | 0) + 2; i++) {
-        for (var j = offset_y - 1; j < offset_y + (main_canvas.height / CHUNK_SIZE | 0) + 2; j++) {
-          var tile = cache.getCanvas(i, j);
-          main_ctx.drawImage(tile, i * CHUNK_SIZE + (wx % CHUNK_SIZE), j * CHUNK_SIZE + (wy % CHUNK_SIZE));
-          }
+      main_ctx.fillRect(0, 0, w, h);
+
+      var di = Math.ceil(h / CHUNK_SIZE / 2);
+      var dj = Math.ceil(w / CHUNK_SIZE / 2);
+      var ti = Math.floor(c.y / CHUNK_SIZE);
+      var tj = Math.floor(c.x / CHUNK_SIZE);
+
+      for   (var i = ti - di; i <= ti + di; i++) {
+        for (var j = tj - dj; j <= tj + dj; j++) {
+          var tile = cache.getCanvas(j, i);
+          var t_pos = new Vector(j * CHUNK_SIZE, i * CHUNK_SIZE);
+          var half_scr = new Vector(w / 2, h / 2);
+
+          var p = half_scr - c + t_pos;
+          main_ctx.drawImage(tile, p.x, p.y);
+        }
       }
       window.requestAnimationFrame(repaint);
     }
