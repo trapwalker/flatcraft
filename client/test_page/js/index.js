@@ -4,8 +4,8 @@
   var main_canvas;
   var main_ctx;
   var cache;
-  var wx; //world x
-  var wy; //world y
+  var cx;
+  var cy;
   var movement_flag;
 
   function init() {
@@ -15,24 +15,34 @@
     main_canvas.width = workfield.clientWidth;
     main_ctx = main_canvas.getContext('2d');
     movement_flag = 0;
-    wx = 0;
-    wy = 0;
+    cx = 0;
+    cy = 0;
     cache = TileCache(TILES_AS_TREE);
+    main_ctx.fillStyle = BASE_COLOR;
+    //main_ctx.strokeStyle = "black";
+
+    var tx;
+    var ty;
 
     function repaint() {
       //Тестовые данные для отображения:
-      main_ctx.fillStyle = BASE_COLOR;
       main_ctx.fillRect(0, 0, main_canvas.width, main_canvas.height);
-      for (var i = - 1; i < (main_canvas.width / CHUNK_SIZE | 0) + 2; i++) {
-      for (var j = - 1; j < (main_canvas.height / CHUNK_SIZE | 0) + 2; j++) {
-            var tile = cache.getCanvas(i, j);
-            main_ctx.drawImage(
-                tile,
-                i * CHUNK_SIZE + (wx % CHUNK_SIZE),
-                j * CHUNK_SIZE + (wy % CHUNK_SIZE)
-            );
-          }
-      }
+      tx = Math.floor(cx / CHUNK_SIZE);
+      ty = Math.floor(cy / CHUNK_SIZE);
+      for (var i = ty - Math.ceil(main_canvas.height / CHUNK_SIZE / 2); i <= ty + Math.ceil(main_canvas.height / CHUNK_SIZE / 2); i++) {
+      for (var j = tx - Math.ceil(main_canvas.width / CHUNK_SIZE / 2); j <= tx + Math.ceil(main_canvas.width / CHUNK_SIZE / 2); j++) {
+          var tile = cache.getCanvas(j, i);
+          main_ctx.drawImage(
+              tile,
+              j * CHUNK_SIZE - cx + main_canvas.width / 2,
+              i * CHUNK_SIZE - cy + main_canvas.height / 2
+          );
+          /*if (DEBUG_MOD) {
+            main_ctx.rect();
+          }/**/
+        }
+      }/**/
+      //main_ctx.stroke();
       window.requestAnimationFrame(repaint);
     }
 
@@ -47,18 +57,20 @@
 
     document.addEventListener('mousemove', function(e) {
       if(movement_flag) {
-        wx += e.pageX - old_x;
-        wy += e.pageY - old_y;
+        cx += old_x - e.pageX;
+        cy += old_y - e.pageY;
         old_x = e.pageX;
         old_y = e.pageY;
       }
     });
 
-    document.addEventListener('mouseup', function(e) {
+    document.addEventListener('mouseup', function() {
       movement_flag = 0;
-      //print('offset_x = ' + Math.floor(wx / CHUNK_SIZE));
-      //print('offset_y = ' + Math.floor(wy / CHUNK_SIZE));
-      //print('-----------------------------------------');
+      print('left_y = ' + (ty - Math.ceil(main_canvas.height / CHUNK_SIZE / 2)));
+      print('right_y = ' + (ty + Math.ceil(main_canvas.height / CHUNK_SIZE / 2)));
+      print('left_x = ' + (tx - Math.ceil(main_canvas.width / CHUNK_SIZE / 2)));
+      print('right_x = ' + (tx + Math.ceil(main_canvas.height / CHUNK_SIZE / 2)));
+      print('-----------------------------------');
     });
 
     window.onresize = function resize() {

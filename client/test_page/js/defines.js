@@ -15,3 +15,4 @@ var COLOR_MAP = {
 var BASE_COLOR = "rgb(155, 155, 255)";
 var CHUNK_SIZE = 256;
 var LOG_ITEMS_COUNT = 100;
+var DEBUG_MOD = true;
