@@ -4,10 +4,9 @@
   var main_canvas;
   var main_ctx;
   var cache;
-  var wx; //world x
-  var wy; //world y
+  var cx;
+  var cy;
   var movement_flag;
-  var c;
 
   function init() {
     workfield = document.getElementById('workfield');
@@ -16,37 +15,34 @@
     main_canvas.width = workfield.clientWidth;
     main_ctx = main_canvas.getContext('2d');
     movement_flag = 0;
-    //wx = 0; wy = 0;
-    wx = 53 * CHUNK_SIZE; wy = 34 * CHUNK_SIZE;
+    cx = 0;
+    cy = 0;
     cache = TileCache(TILES_AS_TREE);
+    main_ctx.fillStyle = BASE_COLOR;
+    //main_ctx.strokeStyle = "black";
 
-    c = new Vector(0, 0);
-    c = new Vector(53 * CHUNK_SIZE, 34 * CHUNK_SIZE);
-    console.log('c='+c+', ' +CHUNK_SIZE);
+    var tx;
+    var ty;
 
     function repaint() {
       //Тестовые данные для отображения:
-      var w = main_canvas.width;
-      var h = main_canvas.height;
-
-      main_ctx.fillStyle = BASE_COLOR;
-      main_ctx.fillRect(0, 0, w, h);
-
-      var di = Math.ceil(h / CHUNK_SIZE / 2);
-      var dj = Math.ceil(w / CHUNK_SIZE / 2);
-      var ti = Math.floor(c.y / CHUNK_SIZE);
-      var tj = Math.floor(c.x / CHUNK_SIZE);
-
-      for   (var i = ti - di; i <= ti + di; i++) {
-        for (var j = tj - dj; j <= tj + dj; j++) {
+      main_ctx.fillRect(0, 0, main_canvas.width, main_canvas.height);
+      tx = Math.floor(cx / CHUNK_SIZE);
+      ty = Math.floor(cy / CHUNK_SIZE);
+      for (var i = ty - Math.ceil(main_canvas.height / CHUNK_SIZE / 2); i <= ty + Math.ceil(main_canvas.height / CHUNK_SIZE / 2); i++) {
+      for (var j = tx - Math.ceil(main_canvas.width / CHUNK_SIZE / 2); j <= tx + Math.ceil(main_canvas.width / CHUNK_SIZE / 2); j++) {
           var tile = cache.getCanvas(j, i);
-          var t_pos = new Vector(j * CHUNK_SIZE, i * CHUNK_SIZE);
-          var half_scr = new Vector(w / 2, h / 2);
-
-          var p = half_scr - c + t_pos;
-          main_ctx.drawImage(tile, p.x, p.y);
+          main_ctx.drawImage(
+              tile,
+              j * CHUNK_SIZE - cx + main_canvas.width / 2,
+              i * CHUNK_SIZE - cy + main_canvas.height / 2
+          );
+          /*if (DEBUG_MOD) {
+            main_ctx.rect();
+          }/**/
         }
-      }
+      }/**/
+      //main_ctx.stroke();
       window.requestAnimationFrame(repaint);
     }
 
@@ -61,16 +57,20 @@
 
     document.addEventListener('mousemove', function(e) {
       if(movement_flag) {
-        wx += e.pageX - old_x;
-        wy += e.pageY - old_y;
+        cx += old_x - e.pageX;
+        cy += old_y - e.pageY;
         old_x = e.pageX;
         old_y = e.pageY;
       }
     });
 
-    document.addEventListener('mouseup', function(e) {
+    document.addEventListener('mouseup', function() {
       movement_flag = 0;
-      console.log('pos='+wx+', '+wy);
+      print('left_y = ' + (ty - Math.ceil(main_canvas.height / CHUNK_SIZE / 2)));
+      print('right_y = ' + (ty + Math.ceil(main_canvas.height / CHUNK_SIZE / 2)));
+      print('left_x = ' + (tx - Math.ceil(main_canvas.width / CHUNK_SIZE / 2)));
+      print('right_x = ' + (tx + Math.ceil(main_canvas.height / CHUNK_SIZE / 2)));
+      print('-----------------------------------');
     });
 
     window.onresize = function resize() {
