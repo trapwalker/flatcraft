@@ -70,16 +70,16 @@ function TileCache(src) {
       canvas.height = CHUNK_SIZE;
       var ctx = canvas.getContext("2d");      
 
-      load_tree(Iter(tile.data), leafFunction, ctx);  // Перенести сюда leafFunction
-      tile.canvas = canvas
-      /*
+      //load_tree(Iter(tile.data), leafFunction, ctx);  // Перенести сюда leafFunction
+
       var img = new Image(CHUNK_SIZE, CHUNK_SIZE);
       img.onload = function() {
           ctx.drawImage(img, 0, 0);
       }
-      //img.src = 'http://icongal.com/gallery/image/177122/star.png';
-      img.src = "images/xkcd/1n8w.png";
-      /**/
+
+      img.src = "images/star.png";
+
+      tile.canvas = canvas
     }
     return canvas;
   })

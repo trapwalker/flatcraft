@@ -23,20 +23,19 @@
       //Тестовые данные для отображения:
       main_ctx.fillStyle = BASE_COLOR;
       main_ctx.fillRect(0, 0, main_canvas.width, main_canvas.height);
-      var offset_x = -Math.floor(wx / CHUNK_SIZE)/256;
-      var offset_y = -Math.floor(wy / CHUNK_SIZE)/256;
-      for (var i = offset_x - 1; i < offset_x + (main_canvas.width / CHUNK_SIZE | 0) + 1; i++)
-        for (var j = offset_y - 1; j < offset_y + (main_canvas.height / CHUNK_SIZE | 0) + 1; j++) {
+      var offset_x = -Math.floor(wx / CHUNK_SIZE)/CHUNK_SIZE;
+      var offset_y = -Math.floor(wy / CHUNK_SIZE)/CHUNK_SIZE;
+      for (var i = offset_x - 1; i < offset_x + (main_canvas.width / CHUNK_SIZE | 0) + 2; i++) {
+        for (var j = offset_y - 1; j < offset_y + (main_canvas.height / CHUNK_SIZE | 0) + 2; j++) {
           var tile = cache.getCanvas(i, j);
-          main_ctx.drawImage(tile, i*CHUNK_SIZE + (wx % CHUNK_SIZE) + dx, j*CHUNK_SIZE + (wy % CHUNK_SIZE) + dy);
-        }
+          main_ctx.drawImage(tile, i * CHUNK_SIZE + (wx % CHUNK_SIZE), j * CHUNK_SIZE + (wy % CHUNK_SIZE));
+          }
+      }
       window.requestAnimationFrame(repaint);
     }
 
-    var old_x = 0;
-    var old_y = 0;
-    var dx = 0;
-    var dy = 0;
+    var old_x;
+    var old_y;
 
     document.addEventListener('mousedown', function(e) {
       movement_flag = 1;
@@ -46,20 +45,18 @@
 
     document.addEventListener('mousemove', function(e) {
       if(movement_flag) {
-        dx = e.pageX - old_x;
-        dy = e.pageY - old_y;
+        wx += e.pageX - old_x;
+        wy += e.pageY - old_y;
+        old_x = e.pageX;
+        old_y = e.pageY;
       }
     });
 
     document.addEventListener('mouseup', function(e) {
       movement_flag = 0;
-      wx += dx;
-      wy += dy;
-      dx = 0;
-      dy = 0;
-      print('offset_x = ' + Math.floor(wx / CHUNK_SIZE));
-      print('offset_y = ' + Math.floor(wy / CHUNK_SIZE));
-      print('-----------------------------------------');
+      //print('offset_x = ' + Math.floor(wx / CHUNK_SIZE));
+      //print('offset_y = ' + Math.floor(wy / CHUNK_SIZE));
+      //print('-----------------------------------------');
     });
 
     window.onresize = function resize() {
