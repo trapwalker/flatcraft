@@ -15,8 +15,8 @@
     main_canvas.width = workfield.clientWidth;
     main_ctx = main_canvas.getContext('2d');
     movement_flag = 0;
-    cx = 0;
-    cy = 0;
+    cx = 53 * CHUNK_SIZE;
+    cy = 34 * CHUNK_SIZE;
     cache = TileCache(TILES_AS_TREE);
     main_ctx.fillStyle = BASE_COLOR;
     //main_ctx.strokeStyle = "black";
