@@ -11,7 +11,9 @@ function Iter(array) {
 function print(text) {
   var con = document.getElementById("console");
   if (con) {
-    con.innerHTML += '<p>'+text+'</p>';
+    p = document.createElement('p');
+    p.innerHTML = text;
+    con.appendChild(p);
     print.log_counter++;
     if (log_counter > LOG_ITEMS_COUNT) {
       con.removeChild(con.firstChild);
