@@ -66,13 +66,17 @@ function TileCache(src) {
       var ctx = canvas.getContext("2d");
 
       load_tree(Iter(tile.data), leafFunction, ctx);  // Перенести сюда leafFunction
-      ctx.font = "300px Arial";
-      ctx.fillStyle = 'red';
-      ctx.fillText("["+x+', '+y+"]", x + CHUNK_SIZE / 2, y + CHUNK_SIZE / 2);
-      ctx.strokeStyle = 'red';
-      ctx.rect(10, 10, CHUNK_SIZE - 20 - 1, CHUNK_SIZE - 20 - 1);
-      ctx.rect(0, 0, CHUNK_SIZE, CHUNK_SIZE);
-      ctx.stroke();
+      if (DEBUG) {
+        ctx.font = "300px Arial";
+        ctx.fillStyle = 'red';
+        ctx.textAlign = "center";
+        ctx.fillText("["+x+', '+y+"]", x + CHUNK_SIZE / 2, y + CHUNK_SIZE / 2);
+    
+        ctx.strokeStyle = 'red';
+        ctx.rect(10, 10, CHUNK_SIZE - 20 - 1, CHUNK_SIZE - 20 - 1);
+        ctx.rect(0, 0, CHUNK_SIZE, CHUNK_SIZE);
+        ctx.stroke();
+      }
 
       /*
       var img = new Image(CHUNK_SIZE, CHUNK_SIZE);
