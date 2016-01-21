@@ -12,13 +12,15 @@
 
     workfield = document.getElementById('workfield');
     main_canvas = document.getElementById('render');
-    main_canvas.height = workfield.clientHeight;
-    main_canvas.width = workfield.clientWidth;
+    onResize();
     main_ctx = main_canvas.getContext('2d');
     movement_flag = 0;
     cache = TileCache(TILES_AS_TREE);
-    main_ctx.fillStyle = BASE_COLOR;
-    //main_ctx.strokeStyle = "black";
+
+    function onResize() {
+      main_canvas.height = workfield.clientHeight;
+      main_canvas.width = workfield.clientWidth;
+    }
 
     function repaint() {
       //Тестовые данные для отображения:
@@ -77,11 +79,7 @@
       movement_flag = 0;
     });
 
-    window.onresize = function resize() {
-      main_canvas.height = workfield.clientHeight;
-      main_canvas.width = workfield.clientWidth;
-    }
-
+    window.onresize = onResize;
     repaint();
   }
 
