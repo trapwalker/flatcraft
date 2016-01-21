@@ -68,11 +68,11 @@ function TileCache(src) {
       load_tree(Iter(tile.data), leafFunction, ctx);  // Перенести сюда leafFunction
       if (DEBUG) {
         ctx.font = "300px Arial";
-        ctx.fillStyle = 'red';
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
         ctx.textAlign = "center";
         ctx.fillText("["+x+', '+y+"]", x + CHUNK_SIZE / 2, y + CHUNK_SIZE / 2);
     
-        ctx.strokeStyle = 'red';
+        ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
         ctx.rect(10, 10, CHUNK_SIZE - 20 - 1, CHUNK_SIZE - 20 - 1);
         ctx.rect(0, 0, CHUNK_SIZE, CHUNK_SIZE);
         ctx.stroke();
