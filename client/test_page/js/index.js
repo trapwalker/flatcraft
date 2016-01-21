@@ -20,30 +20,38 @@
     main_ctx.fillStyle = BASE_COLOR;
     //main_ctx.strokeStyle = "black";
 
-    var tx;
-    var ty;
-
     function repaint() {
       //Тестовые данные для отображения:
-      main_ctx.fillRect(0, 0, main_canvas.width, main_canvas.height);
+      var w = main_canvas.width;
+      var h = main_canvas.height;
 
-      
-      tx = Math.floor(c.x / CHUNK_SIZE);
-      ty = Math.floor(c.y / CHUNK_SIZE);
-      for (var i = ty - Math.ceil(main_canvas.height / CHUNK_SIZE / 2); i <= ty + Math.ceil(main_canvas.height / CHUNK_SIZE / 2); i++) {
-      for (var j = tx - Math.ceil(main_canvas.width / CHUNK_SIZE / 2); j <= tx + Math.ceil(main_canvas.width / CHUNK_SIZE / 2); j++) {
+      main_ctx.fillStyle = BASE_COLOR;
+      main_ctx.fillRect(0, 0, w, h);
+
+      var di = Math.ceil(h / CHUNK_SIZE / 2);
+      var dj = Math.ceil(w / CHUNK_SIZE / 2);
+      var ti = Math.floor(c.y / CHUNK_SIZE);
+      var tj = Math.floor(c.x / CHUNK_SIZE);
+
+      for   (var i = ti - di; i <= ti + di; i++) {
+        for (var j = tj - dj; j <= tj + dj; j++) {
           var tile = cache.getCanvas(j, i);
+          //var p = V(w / 2, h / 2) - c + V(j * CHUNK_SIZE, i * CHUNK_SIZE);
           main_ctx.drawImage(
               tile,
-              j * CHUNK_SIZE - c.x + main_canvas.width / 2,
-              i * CHUNK_SIZE - c.y + main_canvas.height / 2
+              j * CHUNK_SIZE - c.x + w / 2,
+              i * CHUNK_SIZE - c.y + h / 2
           );
-          /*if (DEBUG_MOD) {
-            main_ctx.rect();
-          }/**/
         }
-      }/**/
-      //main_ctx.stroke();
+      }
+
+      if (DEBUG) {
+        main_ctx.font = "20px Arial";
+        main_ctx.fillStyle = 'red';
+        main_ctx.textAlign = "right";
+        main_ctx.fillText("pos=" + c, w - 20, 20);
+      }
+
       window.requestAnimationFrame(repaint);
     }
 
