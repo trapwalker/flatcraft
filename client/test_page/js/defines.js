@@ -1,4 +1,6 @@
 ﻿var NC = '+'; //Node Code
+var BASE_COLOR = "rgb(155, 155, 255)";
+
 var COLOR_MAP = {
     'r': 'red'
     ,'y': 'yellow'
@@ -12,8 +14,6 @@ var COLOR_MAP = {
     ,'1': 'white'
     ,'+': 'green'
 }
-var BASE_COLOR = "rgb(155, 155, 255)";
-var CHUNK_SIZE = 2048;
-var LOG_ITEMS_COUNT = 100;
 
+var CHUNK_SIZE = 2048;
 var DEBUG = true;

@@ -11,15 +11,18 @@ function Iter(array) {
 function print(text) {
   var con = document.getElementById("console");
   if (con) {
+    while (print.log_counter => print.LOG_ITEMS_LIMIT) {
+      con.removeChild(con.firstChild);
+      print.log_counter--;
+    }
     p = document.createElement('p');
     p.innerHTML = text;
     con.appendChild(p);
     print.log_counter++;
-    if (log_counter > LOG_ITEMS_COUNT) {
-      con.removeChild(con.firstChild);
-    }
+
     con.scrollTop = con.scrollHeight;
   }
 }
 
 print.log_counter = 0;
+print.LOG_ITEMS_LIMIT = 100;
