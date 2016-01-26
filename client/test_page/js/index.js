@@ -1,59 +1,19 @@
 (function() {
-
-  var workfield;
-  var main_canvas;
-  var main_ctx;
-  var cache;
-  var c;
   var movement_flag;
+  var map;
 
   function init() {
-    c = V(43.5 * CHUNK_SIZE, 31.5 * CHUNK_SIZE);
+    map = new MapWidget('workfield', {
+      location: new Vector(43.5 * 2048, 31.5 * 2048),
+      layers: [
+        new SimpleLayer({color: 'rgb(200, 255, 200)'}),
+        new TiledLayer({tile_size: 2048})
+      ]
+    });
 
-    workfield = document.getElementById('workfield');
-    main_canvas = document.getElementById('render');
-    onResize();
-    main_ctx = main_canvas.getContext('2d');
     movement_flag = 0;
-    cache = TileCache(TILES_AS_TREE);
-
-    function onResize() {
-      main_canvas.height = workfield.clientHeight;
-      main_canvas.width = workfield.clientWidth;
-    }
 
     function repaint() {
-      //Тестовые данные для отображения:
-      var w = main_canvas.width;
-      var h = main_canvas.height;
-
-      main_ctx.fillStyle = BASE_COLOR;
-      main_ctx.fillRect(0, 0, w, h);
-
-      var di = Math.ceil(h / CHUNK_SIZE / 2);
-      var dj = Math.ceil(w / CHUNK_SIZE / 2);
-      var ti = Math.floor(c.y / CHUNK_SIZE);
-      var tj = Math.floor(c.x / CHUNK_SIZE);
-
-      for   (var i = ti - di; i <= ti + di; i++) {
-        for (var j = tj - dj; j <= tj + dj; j++) {
-          var tile = cache.getCanvas(j, i);
-          //var p = V(w / 2, h / 2) - c + V(j * CHUNK_SIZE, i * CHUNK_SIZE);
-          main_ctx.drawImage(
-              tile,
-              j * CHUNK_SIZE - c.x + w / 2,
-              i * CHUNK_SIZE - c.y + h / 2
-          );
-        }
-      }
-
-      if (DEBUG) {
-        main_ctx.font = "20px Arial";
-        main_ctx.fillStyle = 'red';
-        main_ctx.textAlign = "right";
-        main_ctx.fillText("pos=" + c, w - 20, 20);
-      }
-
       window.requestAnimationFrame(repaint);
     }
 
@@ -68,8 +28,8 @@
 
     document.addEventListener('mousemove', function(e) {
       if(movement_flag) {
-        c.x += old_x - e.pageX;
-        c.y += old_y - e.pageY;
+        map.c.x += old_x - e.pageX;  // todo: use scroll() method
+        map.c.y += old_y - e.pageY;
         old_x = e.pageX;
         old_y = e.pageY;
       }
@@ -78,9 +38,6 @@
     document.addEventListener('mouseup', function() {
       movement_flag = 0;
     });
-
-    window.onresize = onResize;
-    repaint();
   }
 
   init();

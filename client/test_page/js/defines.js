@@ -11,7 +11,7 @@ var COLOR_MAP = {
     ,'p': 'purple'
     ,'.': null
     ,'0': 'black'
-    ,'1': 'white'
+    ,'1': null
     ,'+': 'green'
 }
 

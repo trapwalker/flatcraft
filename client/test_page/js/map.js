@@ -1,8 +1,8 @@
 ﻿
 /// Layer /////////////////////////////////////////////////////////////////////////////////////////
 function Layer(options) {
-  this.name = options.name;
-  this.shift = options.shift || new Vector(0, 0);
+  this.name = options && options.name;
+  this.shift = options && options.shift || new Vector(0, 0);
   // todo: add draw_callback method to options
 }
 
@@ -12,12 +12,12 @@ Layer.prototype.draw = function(map) {
 /// SimpleLayer ///////////////////////////////////////////////////////////////////////////////////
 function SimpleLayer(options) {
   Layer.apply(this, arguments);
-  this.color = options.color;
+  this.color = options && options.color;
 }
 
 SimpleLayer.prototype = Object.create(Layer.prototype);
 
-TiledLayer.prototype.draw = function(map) {
+SimpleLayer.prototype.draw = function(map) {
   Layer.prototype.draw.apply(this, arguments);
   var w = map.canvas.width;  // todo: use property
   var h = map.canvas.height;
@@ -28,8 +28,8 @@ TiledLayer.prototype.draw = function(map) {
 /// TiledLayer ////////////////////////////////////////////////////////////////////////////////////
 function TiledLayer(options) {
   Layer.apply(this, arguments);
-  this.tile_source = options.tile_source;
-  this.tile_size = options.tile_size || this.tile_source.tile_size;
+  this.tile_source = options && options.tile_source;
+  this.tile_size = options && options.tile_size || this.tile_source && this.tile_source.tile_size || 256;
 }
 
 TiledLayer.prototype = Object.create(Layer.prototype);
@@ -79,18 +79,32 @@ Tile.prototype.draw = function(map) {
 
 /// MapWidget /////////////////////////////////////////////////////////////////////////////////////
 function MapWidget(container_id, options) {  // todo: setup layers
-  this.layers = options.layers || [];  // todo: скопировать options.layers, привести его к стандартному списку
+  var self = this;
+  this.layers = options && options.layers || [];  // todo: скопировать options.layers, привести его к стандартному списку
 
   this.container = document.getElementById(container_id);  // todo: throw error if not found
   this.canvas = document.createElement('canvas');
   this.ctx = this.canvas.getContext('2d');
   // todo: add properties: width, height
-  this.c = V(0, 0);  // use property notation with getter and setter
+  this.c = options && options.location || V(0, 0);  // use property notation with getter and setter
   this.is_scrolling_now = false;
   this.cache = TileCache(TILES_AS_TREE);
 
+  this.onResize_callback = (function() {self.onResize();});  // todo: узнать и сделать правильным способом
+  this.onRepaint_callback = (function() {self.onRepaint();});  // todo: узнать и сделать правильным способом
+
   this.container.appendChild(this.canvas);
-  window.onresize = this.onResize;  // todo: Попробовать повесить событие на ресайз контейнера а не окна. Убедиться, что не затёрли старый обработчик ресайза.
+
+  window.onresize = this.onResize_callback;
+  // todo: Попробовать повесить событие на ресайз контейнера а не окна. Убедиться, что не затёрли старый обработчик ресайза.
+
+  this.onResize();
+  this.onRepaint();
+}
+
+MapWidget.prototype.onResize = function() {
+  this.canvas.height = this.container.clientHeight;
+  this.canvas.width = this.container.clientWidth;
 }
 
 MapWidget.prototype.onRepaint = function() {
@@ -109,15 +123,10 @@ MapWidget.prototype.onRepaint = function() {
     ctx.font = "20px Arial";
     ctx.fillStyle = 'red';
     ctx.textAlign = "right";
-    ctx.fillText("pos=" + c, w - 20, 20);
+    ctx.fillText("pos=" + this.c , w - 20, 20);
   }
 
-  window.requestAnimationFrame(repaint);
-}
-
-MapWidget.prototype.onResize = function() {
-  this.canvas.height = this.container.clientHeight;
-  this.canvas.width = this.container.clientWidth;
+  window.requestAnimationFrame(this.onRepaint_callback);
 }
 
 MapWidget.prototype.locate = function(x, y) {
