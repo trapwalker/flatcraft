@@ -6,8 +6,15 @@
     map = new MapWidget('workfield', {
       location: new Vector(43.5 * 2048, 31.5 * 2048),
       layers: [
-        new SimpleLayer({color: 'rgb(200, 255, 200)'}),
-        new TiledLayer({tile_size: 2048})
+        new Layer({
+          name: 'Background',
+          color: 'rgb(200, 255, 200)',
+          onDraw: function(map) {
+            map.ctx.fillStyle = this.options.color;
+            map.ctx.fillRect(0, 0, map.canvas.width, map.canvas.height);  // todo: use width and height properties
+          }
+        }),
+        new TiledLayer({name: 'MainTiles', tile_size: 2048})
       ]
     });
 

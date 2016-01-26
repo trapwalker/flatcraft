@@ -3,34 +3,21 @@
 function Layer(options) {
   this.name = options && options.name;
   this.shift = options && options.shift || new Vector(0, 0);
-  // todo: add draw_callback method to options
-}
+  this.onDraw = options && options.onDraw;
+  this.options = options;  // todo: разобраться как лучше интегрировать дополнительные опции
+};
 
 Layer.prototype.draw = function(map) {
-}
-
-/// SimpleLayer ///////////////////////////////////////////////////////////////////////////////////
-function SimpleLayer(options) {
-  Layer.apply(this, arguments);
-  this.color = options && options.color;
-}
-
-SimpleLayer.prototype = Object.create(Layer.prototype);
-
-SimpleLayer.prototype.draw = function(map) {
-  Layer.prototype.draw.apply(this, arguments);
-  var w = map.canvas.width;  // todo: use property
-  var h = map.canvas.height;
-  map.ctx.fillStyle = this.color;
-  map.ctx.fillRect(0, 0, w, h);
-}
-
+  if (this.onDraw) {
+    this.onDraw(map);
+  };
+};
 /// TiledLayer ////////////////////////////////////////////////////////////////////////////////////
 function TiledLayer(options) {
   Layer.apply(this, arguments);
   this.tile_source = options && options.tile_source;
   this.tile_size = options && options.tile_size || this.tile_source && this.tile_source.tile_size || 256;
-}
+};
 
 TiledLayer.prototype = Object.create(Layer.prototype);
 
@@ -54,9 +41,9 @@ TiledLayer.prototype.draw = function(map) {
         j * tile_size - c.x + w / 2,
         i * tile_size - c.y + h / 2
       );
-    }
-  }
-}
+    };
+  };
+};
 
 // todo: метод прогрева прямоугольной зоны слоя
 // todo: метод освобождения вне прямоугольной зоны слоя
@@ -71,7 +58,7 @@ function Tile(x, y, z, kind) {
 
   this.src = null;
   this.value = null;
-}
+};
 
 Tile.prototype.draw = function(map) {
   var ctx = map.ctx;
@@ -100,12 +87,12 @@ function MapWidget(container_id, options) {  // todo: setup layers
 
   this.onResize();
   this.onRepaint();
-}
+};
 
 MapWidget.prototype.onResize = function() {
   this.canvas.height = this.container.clientHeight;
   this.canvas.width = this.container.clientWidth;
-}
+};
 
 MapWidget.prototype.onRepaint = function() {
   var canvas = this.canvas;
@@ -117,17 +104,17 @@ MapWidget.prototype.onRepaint = function() {
 
   for (var i = 0; i < layers.length; i++) {
     layers[i].draw(this);
-  }
+  };
 
   if (DEBUG) {  // todo: extract to DebugLayer
     ctx.font = "20px Arial";
     ctx.fillStyle = 'red';
     ctx.textAlign = "right";
     ctx.fillText("pos=" + this.c , w - 20, 20);
-  }
+  };
 
   window.requestAnimationFrame(this.onRepaint_callback);
-}
+};
 
 MapWidget.prototype.locate = function(x, y) {
   this.c = (y === undefined)? x : V(x, y);
