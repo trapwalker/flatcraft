@@ -12,11 +12,13 @@ Layer.prototype.draw = function(map) {
     this.onDraw(map);
   };
 };
+
 /// TiledLayer ////////////////////////////////////////////////////////////////////////////////////
 function TiledLayer(options) {
   Layer.apply(this, arguments);
   this.tile_source = options && options.tile_source;
   this.tile_size = options && options.tile_size || this.tile_source && this.tile_source.tile_size || 256;
+  this.onTileDraw = options && options.onTileDraw;
 };
 
 TiledLayer.prototype = Object.create(Layer.prototype);
@@ -24,7 +26,6 @@ TiledLayer.prototype = Object.create(Layer.prototype);
 TiledLayer.prototype.draw = function(map) {
   Layer.prototype.draw.apply(this, arguments);
   var tile_size = this.tile_size;
-  var ctx = map.ctx;
   var c = map.c;  // todo: use "-this.shift"
   var w = map.canvas.width;  // todo: use property
   var h = map.canvas.height;
@@ -35,15 +36,23 @@ TiledLayer.prototype.draw = function(map) {
 
   for   (var i = ti - di; i <= ti + di; i++) {
     for (var j = tj - dj; j <= tj + dj; j++) {
-      var tile = map.cache.getCanvas(j, i);  // todo: use tile_source
-      ctx.drawImage(
-        tile,
+      this.tileDraw(
+        map, 
+        j, i,
         j * tile_size - c.x + w / 2,
         i * tile_size - c.y + h / 2
       );
     };
   };
 };
+
+TiledLayer.prototype.tileDraw = function(map, ix, iy, x, y) {
+  var tile = map.cache.getCanvas(ix, iy);  // todo: use tile_source
+  map.ctx.drawImage(tile, x, y);
+  if (this.onTileDraw) {
+    this.onTileDraw(map, ix, iy, x, y);
+  };
+}
 
 // todo: метод прогрева прямоугольной зоны слоя
 // todo: метод освобождения вне прямоугольной зоны слоя
