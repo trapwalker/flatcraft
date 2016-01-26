@@ -37,16 +37,16 @@ function TileCache(src) {
 
   obj.makeKey = (function(x, y) {
     return x + ':' + y;
-  })
+  });
 
   obj.cleanFar = (function(radius, center) {  // Удаление тайлов, находящихся далле чем в radius от точки center
     // todo: realize
-  })
+  });
 
   obj.onLoad = (function(x, y) {
     console.log('load x='+x+', '+y);
     return {data: '0'}
-  })
+  });
 
   obj.getCanvas = (function(x, y) {
     // todo: Проверить допустимые границы карты (>=0, <256?)
@@ -55,7 +55,7 @@ function TileCache(src) {
     if (tile === undefined) {
       tile = this.onLoad(x, y);
       this.tiles[key] = tile;
-    }
+    };
     
     var canvas = tile.canvas;
     if (canvas === undefined) {
@@ -76,21 +76,12 @@ function TileCache(src) {
         ctx.rect(10, 10, CHUNK_SIZE - 20 - 1, CHUNK_SIZE - 20 - 1);
         ctx.rect(0, 0, CHUNK_SIZE, CHUNK_SIZE);
         ctx.stroke();
-      }
-
-      /*
-      var img = new Image(CHUNK_SIZE, CHUNK_SIZE);
-      img.onload = function() {
-          ctx.drawImage(img, 0, 0);
-      }
-
-      img.src = "images/star.png";
-      /**/
+      };
 
       tile.canvas = canvas
-    }
+    };
     return canvas;
-  })
+  });
 
   return obj;
-}
+};
