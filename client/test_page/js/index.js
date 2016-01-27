@@ -1,5 +1,6 @@
+var map;
 (function() {
-  var map;
+  //var map;
 
   function init() {
     map = new MapWidget('workfield', {
