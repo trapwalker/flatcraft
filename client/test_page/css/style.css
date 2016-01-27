@@ -7,10 +7,3 @@
   width: 100%;
   overflow : hidden;
 }
-
-#render {
-  display : block;
-  position : absolute;
-  top : 0;
-  left : 0;
-}
