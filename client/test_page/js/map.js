@@ -38,6 +38,7 @@ function Layer(options) {
   this.name = options && options.name;
   this.shift = options && options.shift || new Vector(0, 0);
   this.onDraw = options && options.onDraw;
+  this.visible = options && ((options.visible === undefined)?true:options.visible);
   this.options = options;  // todo: разобраться как лучше интегрировать дополнительные опции
 };
 
@@ -169,7 +170,9 @@ MapWidget.prototype.onRepaint = function() {
   var h = canvas.height;
 
   for (var i = 0; i < layers.length; i++) {
-    layers[i].draw(this);
+    var layer = layers[i];
+    if (layer.visible)
+      layers[i].draw(this);
   };
 
   if (DEBUG) {  // todo: extract to DebugLayer

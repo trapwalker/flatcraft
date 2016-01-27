@@ -22,6 +22,7 @@
           tile_size: 2048,
           color: 'rgba(255, 0, 0, 0.5)',
           onTileDraw: drawTileDebug,
+          visible: DEBUG,
         }),/**/
       ]
     });

@@ -12,12 +12,11 @@ function load_tree(stream, callback, ctx, w, x, y) {
     load_tree(stream, callback, ctx, w, x + w, y    );
     load_tree(stream, callback, ctx, w, x,     y + w);
     load_tree(stream, callback, ctx, w, x + w, y + w);
-  }
-  else {
+  } else {
     // todo: Переиеновать коллбэк в on_leaf
     callback(ctx, node, w, x, y);
-  }
-}
+  };
+};
 
 function leafFunction(ctx, color, w, x, y) {
   c = COLOR_MAP[color];
@@ -26,5 +25,5 @@ function leafFunction(ctx, color, w, x, y) {
   } else if (c !== null) {
     ctx.fillStyle = c;
     ctx.fillRect(x, y, w, w);
-  }
-}
+  };
+};
