@@ -125,6 +125,29 @@ function MapWidget(container_id, options) {  // todo: setup layers
 
   this.container.appendChild(this.canvas);
 
+
+  var old_x;
+  var old_y;
+  var movement_flag = 0;  // todo: rename
+
+  this.canvas.addEventListener('mousedown', function(e) {
+    movement_flag = 1;
+    old_x = e.pageX;
+    old_y = e.pageY;
+  });
+
+  this.canvas.addEventListener('mousemove', function(e) {
+    if (movement_flag) {
+      self.scroll(old_x - e.pageX, old_y - e.pageY);
+      old_x = e.pageX;
+      old_y = e.pageY;
+    }
+  });
+
+  this.canvas.addEventListener('mouseup', function() {
+    movement_flag = 0;
+  });
+
   window.onresize = this.onResize_callback;
   // todo: Попробовать повесить событие на ресайз контейнера а не окна. Убедиться, что не затёрли старый обработчик ресайза.
 
@@ -164,6 +187,9 @@ MapWidget.prototype.locate = function(x, y) {
   // todo: some recalculate?
 };
 
+MapWidget.prototype.scroll = function(dx, dy) {  
+  this.locate(this.c.x + dx, this.c.y + dy);
+};
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
