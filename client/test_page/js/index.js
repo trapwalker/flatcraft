@@ -25,7 +25,13 @@ var map;
           color: 'rgba(255, 0, 0, 0.5)',
           onTileDraw: drawTileDebug,
           visible: DEBUG,
-        }),/**/
+        }),
+        new Layer({
+          name: 'Debug data',
+          color: 'red',
+          onDraw: drawDebugInfo,
+          visible: DEBUG,
+        }),
       ]
     });
 
@@ -40,18 +46,6 @@ var map;
       var ctx = canvas.getContext("2d");
       console.log('make tile: ' + [x, y, z] + ' data: ' + data.length);
       load_tree(Iter(data), leafFunction, ctx);  // Перенести сюда leafFunction
-
-      /*if (DEBUG) {
-        ctx.font = "300px Arial";
-        ctx.fillStyle = 'rgba(0, 0, 255, 0.5)';
-        ctx.textAlign = "center";
-        ctx.fillText("["+x+', '+y+"]", this.tile_size / 2, this.tile_size / 2);
-    
-        ctx.strokeStyle = 'rgba(0, 0, 255, 0.5)';
-        ctx.rect(11, 11, this.tile_size - 22 - 1, this.tile_size - 22 - 1);
-        ctx.rect(0, 0, this.tile_size, this.tile_size);
-        ctx.stroke();
-      };*/
       return new Tile(x, y, z, {image: canvas});
     };
 
@@ -69,6 +63,38 @@ var map;
       ctx.rect(x, y, tile_size, tile_size);/**/
       ctx.stroke();
     };
+
+    function drawDebugInfo(map) {
+      var ctx = map.ctx;
+      var w = map.canvas.width;
+      var h = map.canvas.height;
+      var pos = new Vector(Math.round(map.c.x), Math.round(map.c.y));
+      ctx.font = "20px Arial";
+      ctx.fillStyle = this.options.color;
+      ctx.textAlign = "left";
+
+      ctx.fillText("pos=" + pos, w - 300, h - 20);
+      ctx.fillText(
+        "fps=" + Math.round(map.fps_stat.avg())
+        + " [" + Math.round(map.fps_stat.minimum)
+        + ".." + Math.round(map.fps_stat.maximum)
+        + "]", w - 300, h - 40);
+    };
+    
+
+    // GUI
+
+    gui = new dat.GUI();
+    gui.add(map, 'inertial').name('Inertial Scroll');
+    //console.dir(map.c);
+    //gui.add(map, 'c').name('Position');
+    var gui_layers = gui.addFolder('Layers');
+    for (var i = 0; i < map.layers.length; i++) {
+      gui_layers.add(map.layers[i], 'visible').name(map.layers[i].name);
+    };
+    
+    gui.close();
+    
   };
   init();
 })();

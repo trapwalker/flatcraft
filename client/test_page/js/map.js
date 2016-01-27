@@ -126,7 +126,7 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this.onRepaint_callback = (function() {self.onRepaint();});  // todo: узнать и сделать правильным способом
 
   this.container.appendChild(this.canvas);
-
+  
   this._movement_flag = 0;  // todo: rename
   this._scroll_velocity = new Vector(0, 0);
 
@@ -204,21 +204,6 @@ MapWidget.prototype.onRepaint = function() {
     this._scroll_velocity.div(1.1);  // todo: extract inertial factor to options
     if (this._scroll_velocity.length2() < 2)
       this._scroll_velocity.set(0, 0);
-  };
-
-  if (DEBUG) {  // todo: extract to DebugLayer
-    ctx.font = "20px Arial";
-    ctx.fillStyle = 'red';
-    ctx.textAlign = "left";
-    ctx.fillText("pos=" + this.c, w - 300, 20);
-    ctx.fillText(
-      "fps=" + Math.round(this.fps_stat.avg())
-      + " ["  + Math.round(this.fps_stat.minimum)
-      + ".."    + Math.round(this.fps_stat.maximum)
-      + "]", w - 300, 40);
-    ctx.fillText(
-      "v=" + v
-      , w - 300, 60);
   };
 
   window.requestAnimationFrame(this.onRepaint_callback);
