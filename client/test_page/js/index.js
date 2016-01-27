@@ -86,9 +86,8 @@ var map;
 
     gui = new dat.GUI();
     gui.add(map, 'inertial').name('Inertial Scroll');
-    //console.dir(map.c);
-    //gui.add(map, 'c').name('Position');
     var gui_layers = gui.addFolder('Layers');
+    gui_layers.closed = false;
     for (var i = 0; i < map.layers.length; i++) {
       gui_layers.add(map.layers[i], 'visible').name(map.layers[i].name);
     };
