@@ -111,6 +111,7 @@ function Tile(x, y, z, options) {
 
 /// MapWidget /////////////////////////////////////////////////////////////////////////////////////
 function MapWidget(container_id, options) {  // todo: setup layers
+  this.fps_stat = new AvgRing(100);
   var self = this;
   this.layers = options && options.layers || [];  // todo: скопировать options.layers, привести его к стандартному списку
 
@@ -130,6 +131,7 @@ function MapWidget(container_id, options) {  // todo: setup layers
   var old_x;
   var old_y;
   var movement_flag = 0;  // todo: rename
+  var t;
 
   this.canvas.addEventListener('mousedown', function(e) {
     movement_flag = 1;
@@ -162,6 +164,11 @@ MapWidget.prototype.onResize = function() {
 };
 
 MapWidget.prototype.onRepaint = function() {
+  var t1 = new Date().getTime() / 1000;
+  var dt = t1?(t1 - this.t):null;
+  var fps = Math.round(1 / dt);
+  this.fps_stat.add(fps);
+  this.t = t1;
   var canvas = this.canvas;
   var ctx = this.ctx;
   var layers = this.layers;
@@ -178,8 +185,13 @@ MapWidget.prototype.onRepaint = function() {
   if (DEBUG) {  // todo: extract to DebugLayer
     ctx.font = "20px Arial";
     ctx.fillStyle = 'red';
-    ctx.textAlign = "right";
-    ctx.fillText("pos=" + this.c , w - 20, 20);
+    ctx.textAlign = "left";
+    ctx.fillText("pos=" + this.c, w - 300, 20);
+    ctx.fillText(
+      "fps=" + Math.round(this.fps_stat.avg()) + 
+      " ["  + Math.round(this.fps_stat.minimum) + 
+      ".."    + Math.round(this.fps_stat.maximum) + 
+      "]", w - 300, 40);
   };
 
   window.requestAnimationFrame(this.onRepaint_callback);
