@@ -1,4 +1,38 @@
 ﻿
+/// TileSource ////////////////////////////////////////////////////////////////////////////////////
+function TileSource(options) {
+  this.name = options && options.name;
+  this.onGet = options && options.onGet;
+  this.tile_size = options.tile_size;
+  this.options = options;
+};
+
+TileSource.prototype.get = function(x, y, z) {
+  if (this.onGet) {
+    return this.onGet(x, y, z);
+  };
+};
+
+/// TSCache ///////////////////////////////////////////////////////////////////////////////////////
+function TSCache(options) {
+  TileSource.apply(this, arguments);
+  this.storage = {};
+};
+
+TSCache.prototype = Object.create(TileSource.prototype);
+
+TSCache.prototype.get = function(x, y, z) {
+  var key = x + ':' + y + ':' + z;
+  var tile = this.storage[key];
+  if (tile !== undefined) return tile;
+
+  tile = TileSource.prototype.get.apply(this, arguments);
+  if (tile !== undefined)
+    this.storage[key] = tile;
+
+  return tile;
+};
+
 /// Layer /////////////////////////////////////////////////////////////////////////////////////////
 function Layer(options) {
   this.name = options && options.name;
@@ -17,8 +51,8 @@ Layer.prototype.draw = function(map) {
 function TiledLayer(options) {
   Layer.apply(this, arguments);
   this.tile_source = options && options.tile_source;
-  this.tile_size = options && options.tile_size || this.tile_source && this.tile_source.tile_size || 256;
-  this.onTileDraw = options && options.onTileDraw;
+  this.tile_size = options && options.tile_size || this.tile_source && this.tile_source.tile_size;
+  this.onTileDraw = options && options.onTileDraw;  // function(ix, iy, x, y, tile)
 };
 
 TiledLayer.prototype = Object.create(Layer.prototype);
@@ -47,30 +81,31 @@ TiledLayer.prototype.draw = function(map) {
 };
 
 TiledLayer.prototype.tileDraw = function(map, ix, iy, x, y) {
-  var tile = map.cache.getCanvas(ix, iy);  // todo: use tile_source
-  map.ctx.drawImage(tile, x, y);
-  if (this.onTileDraw) {
-    this.onTileDraw(map, ix, iy, x, y);
-  };
-}
+  var tile;
+  if (this.tile_source)
+    tile = this.tile_source.get(ix, iy);  // todo: z
+
+  if (tile && tile.image)
+    map.ctx.drawImage(tile.image, x, y);
+
+  if (this.onTileDraw)
+    this.onTileDraw(map, ix, iy, x, y, tile);
+};
 
 // todo: метод прогрева прямоугольной зоны слоя
 // todo: метод освобождения вне прямоугольной зоны слоя
 
 /// Tile //////////////////////////////////////////////////////////////////////////////////////////
-function Tile(x, y, z, kind) {
+function Tile(x, y, z, options) {
   this.x = x;
   this.y = y;
   this.z = z;
-  this.kind = kind;
-  this.state = null;
+  this.kind = options && options.kind;
+  this.state = options && options.state;
 
-  this.src = null;
-  this.value = null;
-};
-
-Tile.prototype.draw = function(map) {
-  var ctx = map.ctx;
+  this.data = options && options.data;
+  this.image = options && options.image;
+  this.options = options;
 };
 
 /// MapWidget /////////////////////////////////////////////////////////////////////////////////////
@@ -84,7 +119,6 @@ function MapWidget(container_id, options) {  // todo: setup layers
   // todo: add properties: width, height
   this.c = options && options.location || V(0, 0);  // use property notation with getter and setter
   this.is_scrolling_now = false;
-  this.cache = TileCache(TILES_AS_TREE);
 
   this.onResize_callback = (function() {self.onResize();});  // todo: узнать и сделать правильным способом
   this.onRepaint_callback = (function() {self.onRepaint();});  // todo: узнать и сделать правильным способом
