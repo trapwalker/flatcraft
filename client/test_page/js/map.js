@@ -199,13 +199,12 @@ MapWidget.prototype.onRepaint = function() {
   var v;
   if (this.inertial /*&& !this._movement_flag*/) {
     v = this._scroll_velocity.clone();
-    //v.div(dt);
     if (v.length2())
       this.c.add(v);
-    this._scroll_velocity.div(1.1);
+    this._scroll_velocity.div(1.1);  // todo: extract inertial factor to options
     if (this._scroll_velocity.length2() < 2)
       this._scroll_velocity.set(0, 0);
-  }
+  };
 
   if (DEBUG) {  // todo: extract to DebugLayer
     ctx.font = "20px Arial";
