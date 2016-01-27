@@ -36,8 +36,8 @@
       canvas.width = this.tile_size;
       canvas.height = this.tile_size;
       var ctx = canvas.getContext("2d");
-      console.log('make tile: ' + [x, y, z] + ' data: ' + data.data.length);
-      load_tree(Iter(data.data), leafFunction, ctx);  // Перенести сюда leafFunction
+      console.log('make tile: ' + [x, y, z] + ' data: ' + data.length);
+      load_tree(Iter(data), leafFunction, ctx);  // Перенести сюда leafFunction
 
       /*if (DEBUG) {
         ctx.font = "300px Arial";
