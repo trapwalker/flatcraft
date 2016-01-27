@@ -11,47 +11,50 @@ function Vector(x, y) {
     this.y = y || 0;
 };
 
-Vector.prototype.sub = function(v) {
-    if (v.x != null && v.y != null) {
-        this.x -= v.x;
-        this.y -= v.y;
-    } else {
-        this.x -= v;
-        this.y -= v;
-    };
+//Интерпретатор входных данных для функций арифметических операций с векторами
+Vector.prototype._exegete = function(x, y) {
+    if (typeof x === 'object') {
+        y = x.y;
+        x = x.x;
+    }
+    else {
+        if (y == null) y = x; // Если подали одно число, то оно будет дублироваться на X и Y
+    }
+    return {'x': x, 'y': y};
+}
+
+Vector.prototype.sub = function(x, y) {
+    var v = this._exegete(x, y);
+    this.x -= v.x || 0;
+    this.y -= v.y || 0;
     return this;
 };
 
-Vector.prototype.add = function(v) {
-    if (v.x != null && v.y != null) {
-        this.x += v.x;
-        this.y += v.y;
-    } else {
-        this.x += v;
-        this.y += v;
-    };
+Vector.prototype.add = function(x, y) {
+    var v = this._exegete(x, y);
+    this.x += v.x || 0;
+    this.y += v.y || 0;
     return this;
 };
 
-Vector.prototype.mul = function(v) {
-    if (v.x != null && v.y != null) {
-        this.x *= v.x;
-        this.y *= v.y;
-    } else {
-        this.x *= v;
-        this.y *= v;
-    };
+Vector.prototype.mul = function(x, y) {
+    var v = this._exegete(x, y);
+    this.x *= v.x || 0;
+    this.y *= v.y || 0;
     return this;
 };
 
-Vector.prototype.div = function(v) {
-    if (v.x != null && v.y != null) {
-        this.x /= v.x;
-        this.y /= v.y;
-    } else {
-        this.x /= v;
-        this.y /= v;
-    };
+Vector.prototype.div = function(x, y) {
+    var v = this._exegete(x, y);
+    this.x /= v.x || 0;
+    this.y /= v.y || 0;
+    return this;
+};
+
+Vector.prototype.set = function(x, y) {
+    var v = this._exegete(x, y);
+    this.x = v.x || 0;
+    this.y = v.y || 0;
     return this;
 };
 
@@ -112,16 +115,6 @@ Vector.prototype.angleTo = function(v) {
 Vector.prototype.scale = function(s) {
     this.x *= s;
     this.y *= s;
-    return this;
-};
-
-Vector.prototype.set = function(x, y) {
-    if (typeof x === 'object') {
-        y = x.y;
-        x = x.x;
-    };
-    this.x = x || 0;
-    this.y = y || 0;
     return this;
 };
 
