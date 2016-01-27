@@ -56,7 +56,7 @@
     function drawTileDebug(map, ix, iy, x, y, tile) {
       var ctx = map.ctx;
       var tile_size = this.tile_size
-      ctx.font = "290px Arial";
+      ctx.font = "290px Arial";  // todo: font size calculate
       ctx.fillStyle = this.options.textColor || this.options.color;
       ctx.textAlign = "center";
       ctx.fillText("["+ix+', '+iy+"]", x + tile_size / 2, y + tile_size / 2);
