@@ -28,6 +28,7 @@ function print(text) {
 print.log_counter = 0;
 print.LOG_ITEMS_LIMIT = 100;
 
+/// AvgRing ///////////////////////////////////////////////////////////////////////////////////////
 function AvgRing(size) {
   this.size = size;
   this._buffer = [];
@@ -69,3 +70,4 @@ AvgRing.prototype.add = function(value) {
 AvgRing.prototype.avg = function() {
   return this.last_sum / this._buffer.length;
 }
+///////////////////////////////////////////////////////////////////////////////////////////////////
