@@ -4,6 +4,7 @@ var map;
 
   function init() {
     map = new MapWidget('workfield', {
+      inertial: true,
       location: new Vector(43.5 * 2048, 31.5 * 2048),
       layers: [
         new Layer({

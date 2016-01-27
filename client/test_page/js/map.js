@@ -127,28 +127,42 @@ function MapWidget(container_id, options) {  // todo: setup layers
 
   this.container.appendChild(this.canvas);
 
+  this._movement_flag = 0;  // todo: rename
+  this._scroll_velocity = new Vector(0, 0);
+
+  this.inertial = options && options.inertial || false;
+
+  // todo: settings:
+  // scrollable
+  // inertion_value
+  // zoom_factor_min
+  // zoom_factor_max
 
   var old_x;
   var old_y;
-  var movement_flag = 0;  // todo: rename
   var t;
 
   this.canvas.addEventListener('mousedown', function(e) {
-    movement_flag = 1;
+    self._movement_flag = 1;
+    self._scroll_velocity.set(0, 0);
     old_x = e.pageX;
     old_y = e.pageY;
   });
 
   this.canvas.addEventListener('mousemove', function(e) {
-    if (movement_flag) {
-      self.scroll(old_x - e.pageX, old_y - e.pageY);
+    if (self._movement_flag) {
+      var dx = old_x - e.pageX;
+      var dy = old_y - e.pageY;
+      self._scroll_velocity.set(dx, dy);
+
+      self.scroll(dx, dy);
       old_x = e.pageX;
       old_y = e.pageY;
     }
   });
 
   this.canvas.addEventListener('mouseup', function() {
-    movement_flag = 0;
+    self._movement_flag = 0;
   });
 
   window.onresize = this.onResize_callback;
@@ -182,16 +196,30 @@ MapWidget.prototype.onRepaint = function() {
       layers[i].draw(this);
   };
 
+  var v;
+  if (this.inertial /*&& !this._movement_flag*/) {
+    v = this._scroll_velocity.clone();
+    //v.div(dt);
+    if (v.length2())
+      this.c.add(v);
+    this._scroll_velocity.div(1.1);
+    if (this._scroll_velocity.length2() < 2)
+      this._scroll_velocity.set(0, 0);
+  }
+
   if (DEBUG) {  // todo: extract to DebugLayer
     ctx.font = "20px Arial";
     ctx.fillStyle = 'red';
     ctx.textAlign = "left";
     ctx.fillText("pos=" + this.c, w - 300, 20);
     ctx.fillText(
-      "fps=" + Math.round(this.fps_stat.avg()) + 
-      " ["  + Math.round(this.fps_stat.minimum) + 
-      ".."    + Math.round(this.fps_stat.maximum) + 
-      "]", w - 300, 40);
+      "fps=" + Math.round(this.fps_stat.avg())
+      + " ["  + Math.round(this.fps_stat.minimum)
+      + ".."    + Math.round(this.fps_stat.maximum)
+      + "]", w - 300, 40);
+    ctx.fillText(
+      "v=" + v
+      , w - 300, 60);
   };
 
   window.requestAnimationFrame(this.onRepaint_callback);
