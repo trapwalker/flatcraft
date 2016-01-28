@@ -115,7 +115,7 @@ var map;
     };
 
     gui = new dat.GUI();
-    gui.add(map, 'zoom_factor', 1/8, 1).step((1 - 1/8) / 64).name('Zoom').listen();
+    gui.add(map, 'zoom_target', map.zoom_min, map.zoom_max).step((map.zoom_max - map.zoom_min) / 64).name('Zoom').listen();
     gui.add(map, 'inertial').name('Inertial Scroll');
 
     var gui_layers = gui.addFolder('Layers');

@@ -138,9 +138,10 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this.c = options && options.location || V(0, 0);  // use property notation with getter and setter
   this.is_scrolling_now = false;
   this.zoom_factor = 1;
-  this.zoom_min = 1/8;
+  this.zoom_min = 1/3;
   this.zoom_max = 1;
   this.zoom_step = (this.zoom_max - this.zoom_min) / 64;
+  this.zoom_target = this.zoom_factor;
 
   this.onResize_callback = (function() {self.onResize();});  // todo: узнать и сделать правильным способом
   this.onRepaint_callback = (function() {self.onRepaint();});  // todo: узнать и сделать правильным способом
@@ -164,14 +165,25 @@ function MapWidget(container_id, options) {  // todo: setup layers
 
   this.canvas.addEventListener('wheel', function(e) {
     var dy = e.deltaY;
-    var step = Math.sign(dy) * self.zoom_step;
 
-    if (self.zoom_factor + step < self.zoom_min)
+    /*var step = Math.sign(dy) * self.zoom_step;
+
+    if (self.zoom_target + step < self.zoom_min)
       self.zoom_factor = self.zoom_min
-    else if (self.zoom_factor + step > self.zoom_max)
+    else if (self.zoom_target + step > self.zoom_max)
       self.zoom_factor = self.zoom_max
     else
-      self.zoom_factor += step;
+      self.zoom_target += step;
+    */
+    if (dy > 0) {
+      self.zoom_target = self.zoom_target * 1.2;
+      if (self.zoom_target > self.zoom_max)
+        self.zoom_target = self.zoom_max;
+    } else if (dy < 0) {
+      self.zoom_target = self.zoom_target * 0.8;
+      if (self.zoom_target < self.zoom_min)
+        self.zoom_target = self.zoom_min;
+    };
 
     e.preventDefault();
   });
@@ -219,6 +231,7 @@ MapWidget.prototype.onRepaint = function() {
   var fps = Math.round(1 / dt);
   this.fps_stat.add(fps);
   this.t = t1;
+
   var canvas = this.canvas;
   var canvas2 = this.canvas2;
   var ctx = this.ctx;
@@ -227,6 +240,9 @@ MapWidget.prototype.onRepaint = function() {
 
   var w = canvas.width;  // todo: use property
   var h = canvas.height;
+  this.zoom_factor = (this.zoom_target * 3 + this.zoom_factor) / 4;
+  if (Math.abs(this.zoom_target - this.zoom_factor) < 0.001)
+    this.zoom_factor = this.zoom_target;
 
   for (var i = 0; i < layers.length; i++) {
     var layer = layers[i];
