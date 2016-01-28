@@ -131,9 +131,15 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this.container = document.getElementById(container_id);  // todo: throw error if not found
   this.canvas = document.createElement('canvas');
   this.ctx = this.canvas.getContext('2d');
+  this.canvas2 = document.createElement('canvas');
+  this.ctx2 = this.canvas.getContext('2d');
   // todo: add properties: width, height
   this.c = options && options.location || V(0, 0);  // use property notation with getter and setter
   this.is_scrolling_now = false;
+  this.zoom_factor = 1;
+  this.zoom_min = 1/8;
+  this.zoom_max = 1;
+  this.zoom_step = (this.zoom_max - this.zoom_min) / 64;
 
   this.onResize_callback = (function() {self.onResize();});  // todo: узнать и сделать правильным способом
   this.onRepaint_callback = (function() {self.onRepaint();});  // todo: узнать и сделать правильным способом
@@ -154,6 +160,20 @@ function MapWidget(container_id, options) {  // todo: setup layers
   var old_x;
   var old_y;
   var t;
+
+  this.canvas.addEventListener('wheel', function(e) {
+    var dy = e.deltaY;
+    var step = Math.sign(dy) * self.zoom_step;
+
+    if (self.zoom_factor + step < self.zoom_min)
+      self.zoom_factor = self.zoom_min
+    else if (self.zoom_factor + step > self.zoom_max)
+      self.zoom_factor = self.zoom_max
+    else
+      self.zoom_factor += step;
+
+    e.preventDefault();
+  });
 
   this.canvas.addEventListener('mousedown', function(e) {
     self._movement_flag = 1;
@@ -188,6 +208,8 @@ function MapWidget(container_id, options) {  // todo: setup layers
 MapWidget.prototype.onResize = function() {
   this.canvas.height = this.container.clientHeight;
   this.canvas.width = this.container.clientWidth;
+  this.canvas2.height = this.container.clientHeight * 2;
+  this.canvas2.width = this.container.clientWidth * 2;
 };
 
 MapWidget.prototype.onRepaint = function() {
@@ -197,7 +219,9 @@ MapWidget.prototype.onRepaint = function() {
   this.fps_stat.add(fps);
   this.t = t1;
   var canvas = this.canvas;
+  var canvas2 = this.canvas2;
   var ctx = this.ctx;
+  var ctx2 = this.ctx2;
   var layers = this.layers;
 
   var w = canvas.width;  // todo: use property
