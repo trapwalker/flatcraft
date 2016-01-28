@@ -76,7 +76,7 @@ var map;
 
     function drawTileDebug(map, ix, iy, x, y, tile) {
       var ctx = map.ctx;
-      var tile_size = this.tile_size
+      var tile_size = this.tile_size * map.zoom_factor;
       ctx.font = Math.round(tile_size / 8) + "px Arial";  // todo: font size calculate
       ctx.fillStyle = this.options.textColor || this.options.color;
       ctx.textAlign = "center";

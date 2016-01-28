@@ -60,8 +60,8 @@ TiledLayer.prototype = Object.create(Layer.prototype);
 
 TiledLayer.prototype.draw = function(map) {
   Layer.prototype.draw.apply(this, arguments);
-  var tile_size = this.tile_size;
-  var c = map.c;  // todo: use "-this.shift"
+  var tile_size = this.tile_size * map.zoom_factor;
+  var c = map.c.clone().mul(map.zoom_factor);  // todo: use "-this.shift"
   var w = map.canvas.width;  // todo: use property
   var h = map.canvas.height;
   var di = Math.ceil(h / tile_size / 2);
@@ -82,12 +82,13 @@ TiledLayer.prototype.draw = function(map) {
 };
 
 TiledLayer.prototype.tileDraw = function(map, ix, iy, x, y) {
+  var tile_size = this.tile_size * map.zoom_factor;
   var tile;
   if (this.tile_source)
     tile = this.tile_source.get(ix, iy);  // todo: z
 
   if (tile && tile.image) {
-    map.ctx.drawImage(tile.image, x, y);
+    map.ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, x, y, tile_size, tile_size);
   };
 
   if (this.onTileDraw)
@@ -252,7 +253,7 @@ MapWidget.prototype.locate = function(x, y) {
 };
 
 MapWidget.prototype.scroll = function(dx, dy) {  
-  this.locate(this.c.x + dx, this.c.y + dy);
+  this.locate(this.c.x + dx / map.zoom_factor, this.c.y + dy / map.zoom_factor);
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
