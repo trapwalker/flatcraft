@@ -86,8 +86,9 @@ TiledLayer.prototype.tileDraw = function(map, ix, iy, x, y) {
   if (this.tile_source)
     tile = this.tile_source.get(ix, iy);  // todo: z
 
-  if (tile && tile.image)
+  if (tile && tile.image) {
     map.ctx.drawImage(tile.image, x, y);
+  };
 
   if (this.onTileDraw)
     this.onTileDraw(map, ix, iy, x, y, tile);
@@ -105,8 +106,20 @@ function Tile(x, y, z, options) {
   this.state = options && options.state;
 
   this.data = options && options.data;
+  this.preparing_image = options && options.preparing_image;
   this.image = options && options.image;
   this.options = options;
+};
+
+Tile.prototype.makeReadyCallback = function(onReady) {
+  var self = this;
+  return function() {
+    self.state = 'ready';
+    if (self.preparing_image)
+      self.image = self.preparing_image;
+    if (onReady)
+      onReady(self);
+  };
 };
 
 /// MapWidget /////////////////////////////////////////////////////////////////////////////////////

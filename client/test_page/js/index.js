@@ -5,7 +5,7 @@ var map;
   function init() {
     map = new MapWidget('workfield', {
       inertial: true,
-      location: new Vector(43.5 * 2048, 31.5 * 2048),
+      location: new Vector(48875*256, 106133*256), //(43.5 * 2048, 31.5 * 2048),
       layers: [
         new Layer({
           name: 'Background',
@@ -15,17 +15,32 @@ var map;
             map.ctx.fillRect(0, 0, map.canvas.width, map.canvas.height);  // todo: use width and height properties
           },
         }),
+
         new TiledLayer({
-          name: 'Main tiles',
-          tile_source: new TSCache({tile_size: 2048, onGet: makeTile }),
+          name: 'Map tiles',
+          tile_source: new TSCache({tile_size: 256, onGet: getMapTile}),
         }),
         new TiledLayer({
-          name: 'Debug tiles data',
+          name: 'Map tiles debug',
+          tile_size: 256,
+          color: 'rgba(0, 0, 255, 0.5)',
+          onTileDraw: drawTileDebug,
+          visible: false,
+        }),
+
+        new TiledLayer({
+          name: 'XKCD tiles',
+          tile_source: new TSCache({tile_size: 2048, onGet: makeTile}),
+          visible: false,
+        }),
+        new TiledLayer({
+          name: 'XKCD tiles debug',
           tile_size: 2048,
           color: 'rgba(255, 0, 0, 0.5)',
           onTileDraw: drawTileDebug,
-          visible: DEBUG,
+          visible: false,
         }),
+
         new Layer({
           name: 'Debug data',
           color: 'red',
@@ -35,16 +50,26 @@ var map;
       ]
     });
 
+    function getMapTile(x, y, z) {
+      z = 18;
+      var path = 'http://sublayers.net/map/' + z + '/' + x + '/' + y + '.jpg'; //'images\\map\\' + z + '\\' + x + '\\' + y + '.jpg';
+      var img = new Image();
+      var tile = new Tile(x, y, z, {state: 'prepare', preparing_image: img});
+      img.onload = tile.makeReadyCallback();
+      img.src = path;
+      return tile;
+    };
+
     function makeTile(x, y, z) {
       var key = x + ':' + (64 - y);
       var data = TILES_AS_TREE[key];
       if (data === undefined) return null;
 
-      var canvas = document.createElement('canvas');  // todo: Вынести размер тайла в константы
+      var canvas = document.createElement('canvas');
       canvas.width = this.tile_size;
       canvas.height = this.tile_size;
       var ctx = canvas.getContext("2d");
-      console.log('make tile: ' + [x, y, z] + ' data: ' + data.length);
+      console.log('build tile: ' + [x, y, z] + ' data: ' + data.length);
       load_tree(Iter(data), leafFunction, ctx);  // Перенести сюда leafFunction
       return new Tile(x, y, z, {image: canvas});
     };
@@ -52,7 +77,7 @@ var map;
     function drawTileDebug(map, ix, iy, x, y, tile) {
       var ctx = map.ctx;
       var tile_size = this.tile_size
-      ctx.font = "290px Arial";  // todo: font size calculate
+      ctx.font = Math.round(tile_size / 8) + "px Arial";  // todo: font size calculate
       ctx.fillStyle = this.options.textColor || this.options.color;
       ctx.textAlign = "center";
       ctx.fillText("["+ix+', '+iy+"]", x + tile_size / 2, y + tile_size / 2);
@@ -84,13 +109,24 @@ var map;
 
     // GUI
 
+    var locations = {
+      goToShip: function() {map.locate(43.5 * 2048, 31.5 * 2048);},
+      goToMap: function() {map.locate(48875*256, 106133*256);},
+    };
+
     gui = new dat.GUI();
     gui.add(map, 'inertial').name('Inertial Scroll');
+
     var gui_layers = gui.addFolder('Layers');
     gui_layers.closed = false;
     for (var i = 0; i < map.layers.length; i++) {
       gui_layers.add(map.layers[i], 'visible').name(map.layers[i].name);
     };
+
+    var gui_locations = gui.addFolder('Locations');
+    gui_locations.closed = false;
+    gui_locations.add(locations, 'goToShip').name('Ship');
+    gui_locations.add(locations, 'goToMap').name('Map');
     
     gui.close();
     
