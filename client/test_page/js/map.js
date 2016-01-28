@@ -60,8 +60,8 @@ TiledLayer.prototype = Object.create(Layer.prototype);
 
 TiledLayer.prototype.draw = function(map) {
   Layer.prototype.draw.apply(this, arguments);
-  var tile_size = this.tile_size;
-  var c = map.c;  // todo: use "-this.shift"
+  var tile_size = this.tile_size * map.zoom_factor;
+  var c = map.c.clone().mul(map.zoom_factor);  // todo: use "-this.shift"
   var w = map.canvas.width;  // todo: use property
   var h = map.canvas.height;
   var di = Math.ceil(h / tile_size / 2);
@@ -82,12 +82,13 @@ TiledLayer.prototype.draw = function(map) {
 };
 
 TiledLayer.prototype.tileDraw = function(map, ix, iy, x, y) {
+  var tile_size = this.tile_size * map.zoom_factor;
   var tile;
   if (this.tile_source)
     tile = this.tile_source.get(ix, iy);  // todo: z
 
   if (tile && tile.image) {
-    map.ctx.drawImage(tile.image, x, y);
+    map.ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, x, y, tile_size, tile_size);
   };
 
   if (this.onTileDraw)
@@ -131,9 +132,15 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this.container = document.getElementById(container_id);  // todo: throw error if not found
   this.canvas = document.createElement('canvas');
   this.ctx = this.canvas.getContext('2d');
+  this.canvas2 = document.createElement('canvas');
+  this.ctx2 = this.canvas.getContext('2d');
   // todo: add properties: width, height
   this.c = options && options.location || V(0, 0);  // use property notation with getter and setter
   this.is_scrolling_now = false;
+  this.zoom_factor = 1;
+  this.zoom_min = 1/8;
+  this.zoom_max = 1;
+  this.zoom_step = (this.zoom_max - this.zoom_min) / 64;
 
   this.onResize_callback = (function() {self.onResize();});  // todo: узнать и сделать правильным способом
   this.onRepaint_callback = (function() {self.onRepaint();});  // todo: узнать и сделать правильным способом
@@ -154,6 +161,20 @@ function MapWidget(container_id, options) {  // todo: setup layers
   var old_x;
   var old_y;
   var t;
+
+  this.canvas.addEventListener('wheel', function(e) {
+    var dy = e.deltaY;
+    var step = Math.sign(dy) * self.zoom_step;
+
+    if (self.zoom_factor + step < self.zoom_min)
+      self.zoom_factor = self.zoom_min
+    else if (self.zoom_factor + step > self.zoom_max)
+      self.zoom_factor = self.zoom_max
+    else
+      self.zoom_factor += step;
+
+    e.preventDefault();
+  });
 
   this.canvas.addEventListener('mousedown', function(e) {
     self._movement_flag = 1;
@@ -188,6 +209,8 @@ function MapWidget(container_id, options) {  // todo: setup layers
 MapWidget.prototype.onResize = function() {
   this.canvas.height = this.container.clientHeight;
   this.canvas.width = this.container.clientWidth;
+  this.canvas2.height = this.container.clientHeight * 2;
+  this.canvas2.width = this.container.clientWidth * 2;
 };
 
 MapWidget.prototype.onRepaint = function() {
@@ -197,7 +220,9 @@ MapWidget.prototype.onRepaint = function() {
   this.fps_stat.add(fps);
   this.t = t1;
   var canvas = this.canvas;
+  var canvas2 = this.canvas2;
   var ctx = this.ctx;
+  var ctx2 = this.ctx2;
   var layers = this.layers;
 
   var w = canvas.width;  // todo: use property
@@ -228,7 +253,7 @@ MapWidget.prototype.locate = function(x, y) {
 };
 
 MapWidget.prototype.scroll = function(dx, dy) {  
-  this.locate(this.c.x + dx, this.c.y + dy);
+  this.locate(this.c.x + dx / map.zoom_factor, this.c.y + dy / map.zoom_factor);
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
