@@ -3,7 +3,6 @@ function load_tree(stream, callback, ctx, w, x, y) {
   // todo: Пробрасывать глубину узла от корня
   x = (x===undefined)?0:x;
   y = (y===undefined)?0:y;
-  w = (w===undefined)?CHUNK_SIZE:w;
   var node = stream();
   if (node == NC && w > 1) {
     // todo: Добавить коллбэк on_node

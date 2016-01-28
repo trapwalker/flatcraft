@@ -15,7 +15,6 @@ var COLOR_MAP = {
     ,'+': 'green'
 }
 
-var CHUNK_SIZE = 2048;
 var DEBUG = true;
 
 var INIT_STATE = {
@@ -23,7 +22,7 @@ var INIT_STATE = {
     'inertial' : true,
     'location' : 'goToShip',
     'bgLayer' : true,
-    'mapLayer' : true,
+    'mapLayer' : false,
     'mapDebugLayer' : false,
     'XKCDLayer' : true,
     'XKCDDebugLayer' : false,

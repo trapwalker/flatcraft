@@ -72,7 +72,7 @@ var map;
       canvas.height = this.tile_size;
       var ctx = canvas.getContext("2d");
       console.log('build tile: ' + [x, y, z] + ' data: ' + data.length);
-      load_tree(Iter(data), leafFunction, ctx);  // Перенести сюда leafFunction
+      load_tree(Iter(data), leafFunction, ctx, 2048);  // Перенести сюда leafFunction
       return new Tile(x, y, z, {image: canvas});
     };
 
