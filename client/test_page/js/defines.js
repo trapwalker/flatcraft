@@ -17,3 +17,14 @@ var COLOR_MAP = {
 
 var CHUNK_SIZE = 2048;
 var DEBUG = true;
+
+var INIT_STATE = {
+    'zoom' : 0.6, //todo: привязать к зуму
+    'inertial' : true,
+    'location' : 'goToShip',
+    'bgLayer' : true,
+    'mapLayer' : true,
+    'mapDebugLayer' : false,
+    'XKCDLayer' : true,
+    'XKCDDebugLayer' : false,
+}

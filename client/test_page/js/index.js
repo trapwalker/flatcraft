@@ -4,41 +4,43 @@ var map;
 
   function init() {
     map = new MapWidget('workfield', {
-      inertial: true,
-      location: new Vector(48875*256, 106133*256), //(43.5 * 2048, 31.5 * 2048),
+      inertial: INIT_STATE.inertial,
+      //location: new Vector(43.5 * 2048, 31.5 * 2048), //(48875*256, 106133*256)
       layers: [
         new Layer({
           name: 'Background',
-          color: 'rgb(200, 255, 200)',
+          color: BASE_COLOR,
           onDraw: function(map) {
             map.ctx.fillStyle = this.options.color;
             map.ctx.fillRect(0, 0, map.canvas.width, map.canvas.height);  // todo: use width and height properties
           },
+          visible: INIT_STATE.bgLayer,
         }),
 
         new TiledLayer({
           name: 'Map tiles',
           tile_source: new TSCache({tile_size: 256, onGet: getMapTile}),
+          visible: INIT_STATE.mapLayer,
         }),
         new TiledLayer({
           name: 'Map tiles debug',
           tile_size: 256,
           color: 'rgba(150, 150, 255, 0.5)',
           onTileDraw: drawTileDebug,
-          visible: false,
+          visible: INIT_STATE.mapDebugLayer,
         }),
 
         new TiledLayer({
           name: 'XKCD tiles',
           tile_source: new TSCache({tile_size: 2048, onGet: makeTile}),
-          visible: false,
+          visible: INIT_STATE.XKCDLayer,
         }),
         new TiledLayer({
           name: 'XKCD tiles debug',
           tile_size: 2048,
           color: 'rgba(255, 0, 0, 0.5)',
           onTileDraw: drawTileDebug,
-          visible: false,
+          visible: INIT_STATE.XKCDDebugLayer,
         }),
 
         new Layer({
@@ -130,7 +132,8 @@ var map;
     gui_locations.add(locations, 'goToMap').name('Map');
     
     gui.close();
-    
+
+    locations[INIT_STATE.location].call();
   };
   init();
 })();
