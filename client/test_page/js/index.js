@@ -23,7 +23,7 @@ var map;
         new TiledLayer({
           name: 'Map tiles debug',
           tile_size: 256,
-          color: 'rgba(0, 0, 255, 0.5)',
+          color: 'rgba(150, 150, 255, 0.5)',
           onTileDraw: drawTileDebug,
           visible: false,
         }),
