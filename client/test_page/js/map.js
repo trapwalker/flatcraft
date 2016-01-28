@@ -71,7 +71,7 @@ TiledLayer.prototype.draw = function(map) {
 
   for   (var i = ti - di; i <= ti + di; i++) {
     for (var j = tj - dj; j <= tj + dj; j++) {
-      this.tileDraw(
+      this.tileDraw(  // todo: z
         map, 
         j, i,
         j * tile_size - c.x + w / 2,
