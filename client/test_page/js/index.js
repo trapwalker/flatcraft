@@ -12,33 +12,32 @@ var map;
             map.ctx.fillStyle = this.options.color;
             map.ctx.fillRect(0, 0, map.canvas.width, map.canvas.height);  // todo: use width and height properties
           },
-          visible: INIT_STATE.bgLayer,
         }),
 
         new TiledLayer({
           name: 'Map tiles',
           tile_source: new TSCache({tile_size: 256, onGet: getMapTile}),
-          visible: INIT_STATE.mapLayer,
+          visible: true,
         }),
         new TiledLayer({
           name: 'Map tiles debug',
           tile_size: 256,
           color: 'rgba(150, 150, 255, 0.5)',
           onTileDraw: drawTileDebug,
-          visible: INIT_STATE.mapDebugLayer,
+          visible: false,
         }),
 
         new TiledLayer({
           name: 'XKCD tiles',
           tile_source: new TSCache({tile_size: 2048, onGet: makeTile}),
-          visible: INIT_STATE.XKCDLayer,
+          visible: false,
         }),
         new TiledLayer({
           name: 'XKCD tiles debug',
           tile_size: 2048,
           color: 'rgba(255, 0, 0, 0.5)',
           onTileDraw: drawTileDebug,
-          visible: INIT_STATE.XKCDDebugLayer,
+          visible: false,
         }),
 
         new Layer({

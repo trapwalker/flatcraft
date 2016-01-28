@@ -138,7 +138,7 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this.c = options && options.location || V(0, 0);  // use property notation with getter and setter
   this.is_scrolling_now = false;
   this.zoom_factor = 1;
-  this.zoom_min = 1/3;
+  this.zoom_min = 1/2;
   this.zoom_max = 1;
   this.zoom_step = (this.zoom_max - this.zoom_min) / 64;
   this.zoom_target = this.zoom_factor;
@@ -153,7 +153,7 @@ function MapWidget(container_id, options) {  // todo: setup layers
 
   this.scrollType = options && options.scrollType || 'simple';
 
-  this._dx = 0;
+  this._dx = 0;  // todo: rename
   this._dy = 0;
 
   // todo: settings:
@@ -169,15 +169,6 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this.canvas.addEventListener('wheel', function(e) {
     var dy = e.deltaY;
 
-    /*var step = Math.sign(dy) * self.zoom_step;
-
-    if (self.zoom_target + step < self.zoom_min)
-      self.zoom_factor = self.zoom_min
-    else if (self.zoom_target + step > self.zoom_max)
-      self.zoom_factor = self.zoom_max
-    else
-      self.zoom_target += step;
-    */
     if (dy > 0) {
       self.zoom_target = self.zoom_target * 1.2;
       if (self.zoom_target > self.zoom_max)
@@ -296,7 +287,7 @@ MapWidget.prototype.locate = function(x, y) {
 };
 
 MapWidget.prototype.scroll = function(dx, dy) {  
-  this.locate(this.c.x + dx / map.zoom_factor, this.c.y + dy / map.zoom_factor);
+  this.locate(this.c.x + dx / this.zoom_factor, this.c.y + dy / this.zoom_factor);
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
