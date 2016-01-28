@@ -71,7 +71,7 @@ TiledLayer.prototype.draw = function(map) {
 
   for   (var i = ti - di; i <= ti + di; i++) {
     for (var j = tj - dj; j <= tj + dj; j++) {
-      this.tileDraw(
+      this.tileDraw(  // todo: z
         map, 
         j, i,
         j * tile_size - c.x + w / 2,
@@ -86,8 +86,9 @@ TiledLayer.prototype.tileDraw = function(map, ix, iy, x, y) {
   if (this.tile_source)
     tile = this.tile_source.get(ix, iy);  // todo: z
 
-  if (tile && tile.image)
+  if (tile && tile.image) {
     map.ctx.drawImage(tile.image, x, y);
+  };
 
   if (this.onTileDraw)
     this.onTileDraw(map, ix, iy, x, y, tile);
@@ -105,8 +106,20 @@ function Tile(x, y, z, options) {
   this.state = options && options.state;
 
   this.data = options && options.data;
+  this.preparing_image = options && options.preparing_image;
   this.image = options && options.image;
   this.options = options;
+};
+
+Tile.prototype.makeReadyCallback = function(onReady) {
+  var self = this;
+  return function() {
+    self.state = 'ready';
+    if (self.preparing_image)
+      self.image = self.preparing_image;
+    if (onReady)
+      onReady(self);
+  };
 };
 
 /// MapWidget /////////////////////////////////////////////////////////////////////////////////////
@@ -118,15 +131,21 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this.container = document.getElementById(container_id);  // todo: throw error if not found
   this.canvas = document.createElement('canvas');
   this.ctx = this.canvas.getContext('2d');
+  this.canvas2 = document.createElement('canvas');
+  this.ctx2 = this.canvas.getContext('2d');
   // todo: add properties: width, height
   this.c = options && options.location || V(0, 0);  // use property notation with getter and setter
   this.is_scrolling_now = false;
+  this.zoom_factor = 1;
+  this.zoom_min = 1/8;
+  this.zoom_max = 1;
+  this.zoom_step = (this.zoom_max - this.zoom_min) / 64;
 
   this.onResize_callback = (function() {self.onResize();});  // todo: узнать и сделать правильным способом
   this.onRepaint_callback = (function() {self.onRepaint();});  // todo: узнать и сделать правильным способом
 
   this.container.appendChild(this.canvas);
-
+  
   this._movement_flag = 0;  // todo: rename
   this._scroll_velocity = new Vector(0, 0);
 
@@ -144,6 +163,20 @@ function MapWidget(container_id, options) {  // todo: setup layers
   var old_x;
   var old_y;
   var t;
+
+  this.canvas.addEventListener('wheel', function(e) {
+    var dy = e.deltaY;
+    var step = Math.sign(dy) * self.zoom_step;
+
+    if (self.zoom_factor + step < self.zoom_min)
+      self.zoom_factor = self.zoom_min
+    else if (self.zoom_factor + step > self.zoom_max)
+      self.zoom_factor = self.zoom_max
+    else
+      self.zoom_factor += step;
+
+    e.preventDefault();
+  });
 
   this.canvas.addEventListener('mousedown', function(e) {
     self._movement_flag = 1;
@@ -179,6 +212,8 @@ function MapWidget(container_id, options) {  // todo: setup layers
 MapWidget.prototype.onResize = function() {
   this.canvas.height = this.container.clientHeight;
   this.canvas.width = this.container.clientWidth;
+  this.canvas2.height = this.container.clientHeight * 2;
+  this.canvas2.width = this.container.clientWidth * 2;
 };
 
 MapWidget.prototype.onRepaint = function() {
@@ -188,7 +223,9 @@ MapWidget.prototype.onRepaint = function() {
   this.fps_stat.add(fps);
   this.t = t1;
   var canvas = this.canvas;
+  var canvas2 = this.canvas2;
   var ctx = this.ctx;
+  var ctx2 = this.ctx2;
   var layers = this.layers;
 
   var w = canvas.width;  // todo: use property
@@ -211,21 +248,6 @@ MapWidget.prototype.onRepaint = function() {
     this._scroll_velocity.div(1.03);  // todo: extract inertial factor to options
     if (this._scroll_velocity.length2() < 2)
       this._scroll_velocity.set(0, 0);
-  };
-
-  if (DEBUG) {  // todo: extract to DebugLayer
-    ctx.font = "20px Arial";
-    ctx.fillStyle = 'red';
-    ctx.textAlign = "left";
-    ctx.fillText("pos=" + this.c, w - 300, 20);
-    ctx.fillText(
-      "fps=" + Math.round(this.fps_stat.avg())
-      + " ["  + Math.round(this.fps_stat.minimum)
-      + ".."    + Math.round(this.fps_stat.maximum)
-      + "]", w - 300, 40);
-    ctx.fillText(
-      "v=" + v
-      , w - 300, 60);
   };
 
   window.requestAnimationFrame(this.onRepaint_callback);
