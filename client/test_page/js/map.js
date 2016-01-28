@@ -149,7 +149,7 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this._movement_flag = 0;  // todo: rename
   this._scroll_velocity = new Vector(0, 0);
 
-  this.inertial = options && options.inertial || false;
+  this.scrollType = options && options.scrollType || 'simple';
 
   this._dx = 0;
   this._dy = 0;
@@ -226,31 +226,49 @@ MapWidget.prototype.onRepaint = function() {
   var w = canvas.width;  // todo: use property
   var h = canvas.height;
 
-  this.scroll(this._dx, this._dy);
-
-  for (var i = 0; i < layers.length; i++) {
-    var layer = layers[i];
-    if (layer.visible)
-      layers[i].draw(this);
-  };
-
-  console.log('sv: ' + this._scroll_velocity);
-
-  var v;
-  if (this.inertial) {
+  //Простой скроллинг
+  if(this.scrollType == 'simple') {
+    this.scroll(this._dx, this._dy);
+  }
+  //Скроллинг с инерцией
+  if(this.scrollType == 'inertial') {
+    this.scroll(this._dx, this._dy);
+    var v;
     if (this._movement_flag) {
-      this._scroll_velocity.add(this._dx/3, this._dy/3);
+      this._scroll_velocity.set(this._dx, this._dy);
     }
+    else {
+      v = this._scroll_velocity.clone();
+      if (v.length2())
+        this.c.add(v);
+      this._scroll_velocity.div(1.05);  // todo: extract inertial factor to options
+      if (this._scroll_velocity.length2() < 0.1)
+        this._scroll_velocity.set(0, 0);
+    };
+  };
+  //Скроллинг с инерцией и скольжением
+  if(this.scrollType == 'sliding') {
+    this.scroll(this._dx, this._dy);
+    var v;
+    if (this._movement_flag) {
+      this._scroll_velocity.add(this._dx*0.33, this._dy*0.33); // todo: extract sliding factor to options
+    };
     v = this._scroll_velocity.clone();
     if (v.length2())
       this.c.add(v);
-    this._scroll_velocity.div(1.03);  // todo: extract inertial factor to options
+    this._scroll_velocity.div(1.05);  // todo: extract inertial factor to options
     if (this._scroll_velocity.length2() < 0.1)
       this._scroll_velocity.set(0, 0);
   };
 
   this._dx = 0;
   this._dy = 0;
+
+  for (var i = 0; i < layers.length; i++) {
+    var layer = layers[i];
+    if (layer.visible)
+      layers[i].draw(this);
+  };
 
   window.requestAnimationFrame(this.onRepaint_callback);
 };

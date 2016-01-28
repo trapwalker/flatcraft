@@ -19,7 +19,7 @@ var DEBUG = true;
 
 var INIT_STATE = {
     'zoom' : 0.6, //todo: привязать к зуму
-    'inertial' : true,
+    'scroll' : 'simple', //simple, inertial, sliding
     'location' : 'goToShip',
     'bgLayer' : true,
     'mapLayer' : false,

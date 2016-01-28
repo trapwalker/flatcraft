@@ -1,11 +1,9 @@
 var map;
 (function() {
-  //var map;
 
   function init() {
     map = new MapWidget('workfield', {
-      inertial: INIT_STATE.inertial,
-      //location: new Vector(43.5 * 2048, 31.5 * 2048), //(48875*256, 106133*256)
+      scrollType: INIT_STATE.scroll,
       layers: [
         new Layer({
           name: 'Background',
@@ -118,7 +116,7 @@ var map;
 
     gui = new dat.GUI();
     gui.add(map, 'zoom_factor', 1/8, 1).step((1 - 1/8) / 64).name('Zoom').listen();
-    gui.add(map, 'inertial').name('Inertial Scroll');
+    gui.add(map, 'scrollType', [ 'simple', 'inertial', 'sliding']).name('Type of scroll');
 
     var gui_layers = gui.addFolder('Layers');
     gui_layers.closed = false;
