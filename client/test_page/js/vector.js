@@ -11,50 +11,68 @@ function Vector(x, y) {
     this.y = y || 0;
 };
 
-//Интерпретатор входных данных для функций арифметических операций с векторами
-Vector.prototype._exegete = function(x, y) {
+Vector.prototype.sub = function(x, y) {
     if (typeof x === 'object') {
         y = x.y;
         x = x.x;
     }
     else {
-        if (y == null) y = x; // Если подали одно число, то оно будет дублироваться на X и Y
+        if (y == null) y = x;
     }
-    return {'x': x, 'y': y};
-}
-
-Vector.prototype.sub = function(x, y) {
-    var v = this._exegete(x, y);
-    this.x -= v.x || 0;
-    this.y -= v.y || 0;
+    this.x -= x || 0;
+    this.y -= y || 0;
     return this;
 };
 
 Vector.prototype.add = function(x, y) {
-    var v = this._exegete(x, y);
-    this.x += v.x || 0;
-    this.y += v.y || 0;
+    if (typeof x === 'object') {
+        y = x.y;
+        x = x.x;
+    }
+    else {
+        if (y == null) y = x;
+    }
+    this.x += x || 0;
+    this.y += y || 0;
     return this;
 };
 
 Vector.prototype.mul = function(x, y) {
-    var v = this._exegete(x, y);
-    this.x *= v.x || 0;
-    this.y *= v.y || 0;
+    if (typeof x === 'object') {
+        y = x.y;
+        x = x.x;
+    }
+    else {
+        if (y == null) y = x;
+    }
+    this.x *= x || 0;
+    this.y *= y || 0;
     return this;
 };
 
 Vector.prototype.div = function(x, y) {
-    var v = this._exegete(x, y);
-    this.x /= v.x || 0;
-    this.y /= v.y || 0;
+    if (typeof x === 'object') {
+        y = x.y;
+        x = x.x;
+    }
+    else {
+        if (y == null) y = x;
+    }
+    this.x /= x || 0;
+    this.y /= y || 0;
     return this;
 };
 
 Vector.prototype.set = function(x, y) {
-    var v = this._exegete(x, y);
-    this.x = v.x || 0;
-    this.y = v.y || 0;
+    if (typeof x === 'object') {
+        y = x.y;
+        x = x.x;
+    }
+    else {
+        if (y == null) y = x;
+    }
+    this.x = x || 0;
+    this.y = y || 0;
     return this;
 };
 

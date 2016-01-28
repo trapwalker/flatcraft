@@ -1,5 +1,5 @@
 ﻿var NC = '+'; //Node Code
-var BASE_COLOR = "rgb(155, 155, 255)";
+var BASE_COLOR = 'rgb(201, 180, 237)';//'rgb(200, 255, 200)';
 
 var COLOR_MAP = {
     'r': 'red'
@@ -15,5 +15,15 @@ var COLOR_MAP = {
     ,'+': 'green'
 }
 
-var CHUNK_SIZE = 2048;
 var DEBUG = true;
+
+var INIT_STATE = {
+    'zoom' : 0.6, //todo: привязать к зуму
+    'scroll' : 'simple', //simple, inertial, sliding
+    'location' : 'goToShip',
+    'bgLayer' : true,
+    'mapLayer' : false,
+    'mapDebugLayer' : false,
+    'XKCDLayer' : true,
+    'XKCDDebugLayer' : false,
+}

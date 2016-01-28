@@ -1,4 +1,4 @@
-﻿
+
 /// TileSource ////////////////////////////////////////////////////////////////////////////////////
 function TileSource(options) {
   this.name = options && options.name;
@@ -151,7 +151,10 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this._movement_flag = 0;  // todo: rename
   this._scroll_velocity = new Vector(0, 0);
 
-  this.inertial = options && options.inertial || false;
+  this.scrollType = options && options.scrollType || 'simple';
+
+  this._dx = 0;
+  this._dy = 0;
 
   // todo: settings:
   // scrollable
@@ -190,18 +193,14 @@ function MapWidget(container_id, options) {  // todo: setup layers
 
   this.canvas.addEventListener('mousedown', function(e) {
     self._movement_flag = 1;
-    self._scroll_velocity.set(0, 0);
     old_x = e.pageX;
     old_y = e.pageY;
   });
 
   this.canvas.addEventListener('mousemove', function(e) {
     if (self._movement_flag) {
-      var dx = old_x - e.pageX;
-      var dy = old_y - e.pageY;
-      self._scroll_velocity.set(dx, dy);
-
-      self.scroll(dx, dy);
+      self._dx += old_x - e.pageX;
+      self._dy += old_y - e.pageY;
       old_x = e.pageX;
       old_y = e.pageY;
     }
@@ -244,20 +243,48 @@ MapWidget.prototype.onRepaint = function() {
   if (Math.abs(this.zoom_target - this.zoom_factor) < 0.001)
     this.zoom_factor = this.zoom_target;
 
+  //Простой скроллинг
+  if(this.scrollType == 'simple') {
+    this.scroll(this._dx, this._dy);
+  }
+  //Скроллинг с инерцией
+  if(this.scrollType == 'inertial') {
+    this.scroll(this._dx, this._dy);
+    var v;
+    if (this._movement_flag) {
+      this._scroll_velocity.set(this._dx, this._dy);
+    }
+    else {
+      v = this._scroll_velocity.clone();
+      if (v.length2())
+        this.c.add(v);
+      this._scroll_velocity.div(1.05);  // todo: extract inertial factor to options
+      if (this._scroll_velocity.length2() < 0.1)
+        this._scroll_velocity.set(0, 0);
+    };
+  };
+  //Скроллинг с инерцией и скольжением
+  if(this.scrollType == 'sliding') {
+    this.scroll(this._dx, this._dy);
+    var v;
+    if (this._movement_flag) {
+      this._scroll_velocity.add(this._dx*0.33, this._dy*0.33); // todo: extract sliding factor to options
+    };
+    v = this._scroll_velocity.clone();
+    if (v.length2())
+      this.c.add(v);
+    this._scroll_velocity.div(1.05);  // todo: extract inertial factor to options
+    if (this._scroll_velocity.length2() < 0.1)
+      this._scroll_velocity.set(0, 0);
+  };
+
+  this._dx = 0;
+  this._dy = 0;
+
   for (var i = 0; i < layers.length; i++) {
     var layer = layers[i];
     if (layer.visible)
       layers[i].draw(this);
-  };
-
-  var v;
-  if (this.inertial /*&& !this._movement_flag*/) {
-    v = this._scroll_velocity.clone();
-    if (v.length2())
-      this.c.add(v);
-    this._scroll_velocity.div(1.1);  // todo: extract inertial factor to options
-    if (this._scroll_velocity.length2() < 2)
-      this._scroll_velocity.set(0, 0);
   };
 
   window.requestAnimationFrame(this.onRepaint_callback);
