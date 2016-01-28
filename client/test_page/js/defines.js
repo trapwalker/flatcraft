@@ -1,5 +1,5 @@
 ﻿var NC = '+'; //Node Code
-var BASE_COLOR = "rgb(155, 155, 255)";
+var BASE_COLOR = 'rgb(201, 180, 237)';//'rgb(200, 255, 200)';
 
 var COLOR_MAP = {
     'r': 'red'

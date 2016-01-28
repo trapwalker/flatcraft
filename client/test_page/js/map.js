@@ -132,6 +132,9 @@ function MapWidget(container_id, options) {  // todo: setup layers
 
   this.inertial = options && options.inertial || false;
 
+  this._dx = 0;
+  this._dy = 0;
+
   // todo: settings:
   // scrollable
   // inertion_value
@@ -144,18 +147,19 @@ function MapWidget(container_id, options) {  // todo: setup layers
 
   this.canvas.addEventListener('mousedown', function(e) {
     self._movement_flag = 1;
-    self._scroll_velocity.set(0, 0);
+    //self._scroll_velocity.set(0, 0);
     old_x = e.pageX;
     old_y = e.pageY;
   });
 
   this.canvas.addEventListener('mousemove', function(e) {
     if (self._movement_flag) {
-      var dx = old_x - e.pageX;
-      var dy = old_y - e.pageY;
-      self._scroll_velocity.set(dx, dy);
+      self._dx = old_x - e.pageX;
+      self._dy = old_y - e.pageY;
 
-      self.scroll(dx, dy);
+      //self._scroll_velocity.set(dx, dy);
+
+      //self.scroll(dx, dy);
       old_x = e.pageX;
       old_y = e.pageY;
     }
@@ -190,6 +194,9 @@ MapWidget.prototype.onRepaint = function() {
   var w = canvas.width;  // todo: use property
   var h = canvas.height;
 
+  //console.log(this._mt + ' / ' + this._pt);
+  this.scroll(this._dx, this._dy);
+
   for (var i = 0; i < layers.length; i++) {
     var layer = layers[i];
     if (layer.visible)
@@ -201,7 +208,7 @@ MapWidget.prototype.onRepaint = function() {
     v = this._scroll_velocity.clone();
     if (v.length2())
       this.c.add(v);
-    this._scroll_velocity.div(1.1);  // todo: extract inertial factor to options
+    this._scroll_velocity.div(1.03);  // todo: extract inertial factor to options
     if (this._scroll_velocity.length2() < 2)
       this._scroll_velocity.set(0, 0);
   };

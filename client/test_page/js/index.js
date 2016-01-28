@@ -9,7 +9,7 @@ var map;
       layers: [
         new Layer({
           name: 'Background',
-          color: 'rgb(200, 255, 200)',
+          color: BASE_COLOR,
           onDraw: function(map) {
             map.ctx.fillStyle = this.options.color;
             map.ctx.fillRect(0, 0, map.canvas.width, map.canvas.height);  // todo: use width and height properties
@@ -51,7 +51,7 @@ var map;
         ctx.rect(11, 11, this.tile_size - 22 - 1, this.tile_size - 22 - 1);
         ctx.rect(0, 0, this.tile_size, this.tile_size);
         ctx.stroke();
-      };*/
+      };/**/
       return new Tile(x, y, z, {image: canvas});
     };
 
