@@ -156,7 +156,8 @@ function MapWidget(container_id, options) {  // todo: setup layers
 
   this.inertion_value = 0.033;
   this.sliding_value = 0.15;
-  this._movement_flag = 0;  // todo: rename
+  this._mouse_move_flag = 0;
+  this._mouse_down_flag = 0;
   this._scroll_velocity = new Vector(0, 0);
 
   this.scrollType = options && options.scrollType || 'simple';
@@ -186,13 +187,14 @@ function MapWidget(container_id, options) {  // todo: setup layers
   });
 
   this.canvas.addEventListener('mousedown', function(e) {
-    self._movement_flag = 1;
+    self._mouse_move_flag = 1;
+    self._mouse_down_flag = 1;
     old_x = e.pageX;
     old_y = e.pageY;
   });
 
   this.canvas.addEventListener('mousemove', function(e) {
-    if (self._movement_flag) {
+    if (self._mouse_move_flag) {
       self._dx += old_x - e.pageX;
       self._dy += old_y - e.pageY;
       old_x = e.pageX;
@@ -201,7 +203,7 @@ function MapWidget(container_id, options) {  // todo: setup layers
   });
 
   this.canvas.addEventListener('mouseup', function() {
-    self._movement_flag = 0;
+    self._mouse_move_flag = 0;
   });
 
   window.onresize = this.onResize_callback;
@@ -233,14 +235,7 @@ MapWidget.prototype.onRepaint = function() {
   this.fps_stat.add(fps);
   this.t = t1;
 
-  var canvas = this.canvas;
-  var canvas2 = this.canvas2;
-  var ctx = this.ctx;
-  var ctx2 = this.ctx2;
   var layers = this.layers;
-
-  var w = canvas.width;  // todo: use property
-  var h = canvas.height;
   
   var d_zoom = (this.zoom_target - this.zoom_factor) / this.zoom_animation_factor;
   this.zoom_factor += d_zoom;
@@ -257,13 +252,12 @@ MapWidget.prototype.onRepaint = function() {
     this.scroll(this._dx, this._dy);
   }
   //Скроллинг с инерцией
-  if(this.scrollType == 'inertial') {
+  if (this.scrollType == 'inertial') {
     this.scroll(this._dx, this._dy);
     var v;
-    if (this._movement_flag) {
+    if (this._mouse_move_flag) {
       this._scroll_velocity.set(this._dx, this._dy);
-    }
-    else {
+    } else {
       v = this._scroll_velocity.clone();
       if (v.length2())
         this.c.add(v);
@@ -273,10 +267,13 @@ MapWidget.prototype.onRepaint = function() {
     };
   };
   //Скроллинг с инерцией и скольжением
-  if(this.scrollType == 'sliding') {
+  if (this.scrollType == 'sliding') {
     this.scroll(this._dx, this._dy);
     var v;
-    if (this._movement_flag) {
+    if (this._mouse_down_flag) {
+      this._scroll_velocity.set(0, 0);
+    }
+    if (this._mouse_move_flag) {
       this._scroll_velocity.add(this._dx*this.sliding_value, this._dy*this.sliding_value);
     };
     v = this._scroll_velocity.clone();
@@ -295,6 +292,8 @@ MapWidget.prototype.onRepaint = function() {
     if (layer.visible)
       layers[i].draw(this);
   };
+
+  this._mouse_down_flag = 0;
 
   window.requestAnimationFrame(this.onRepaint_callback);
 };
