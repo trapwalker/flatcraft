@@ -248,38 +248,39 @@ MapWidget.prototype.onRepaint = function() {
   this._dy /= this.zoom_factor;
 
   //Простой скроллинг
-  if(this.scrollType == 'simple') {
+  if(this.scrollType == 'simple')
     this.scroll(this._dx, this._dy);
-  }
+
   //Скроллинг с инерцией
   if (this.scrollType == 'inertial') {
     this.scroll(this._dx, this._dy);
-    var v;
     if (this._mouse_move_flag) {
       this._scroll_velocity.set(this._dx, this._dy);
     } else {
-      v = this._scroll_velocity.clone();
-      if (v.length2())
-        this.c.add(v);
-      this._scroll_velocity.div(this.inertion_value+1);
+      if (this._scroll_velocity.length2())
+        this.c.add(this._scroll_velocity);
+
+      this._scroll_velocity.div(this.inertion_value + 1);
+
       if (this._scroll_velocity.length2() < 0.1)
         this._scroll_velocity.set(0, 0);
     };
   };
+
   //Скроллинг с инерцией и скольжением
   if (this.scrollType == 'sliding') {
     this.scroll(this._dx, this._dy);
-    var v;
-    if (this._mouse_down_flag) {
+    if (this._mouse_down_flag)
       this._scroll_velocity.set(0, 0);
-    }
-    if (this._mouse_move_flag) {
-      this._scroll_velocity.add(this._dx*this.sliding_value, this._dy*this.sliding_value);
-    };
-    v = this._scroll_velocity.clone();
-    if (v.length2())
-      this.c.add(v);
+
+    if (this._mouse_move_flag)
+      this._scroll_velocity.add(this._dx * this.sliding_value, this._dy * this.sliding_value);
+
+    if (this._scroll_velocity.length2())
+      this.c.add(this._scroll_velocity);
+
     this._scroll_velocity.div(this.inertion_value+1);
+
     if (this._scroll_velocity.length2() < 0.1)
       this._scroll_velocity.set(0, 0);
   };
