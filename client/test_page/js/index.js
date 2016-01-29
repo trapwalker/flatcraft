@@ -18,6 +18,7 @@ var map;
           name: 'Map tiles',
           tile_source: new TSCache({tile_size: 256, onGet: getMapTile}),
           visible: true,
+          z_max: 18,  // todo: rename to z_deep
         }),
         new TiledLayer({
           name: 'Map tiles debug',
@@ -25,12 +26,14 @@ var map;
           color: 'rgba(150, 150, 255, 0.5)',
           onTileDraw: drawTileDebug,
           visible: false,
+          z_max: 18,  // todo: rename to z_deep
         }),
 
         new TiledLayer({
           name: 'XKCD tiles',
           tile_source: new TSCache({tile_size: 2048, onGet: makeTile}),
           visible: false,
+          z_max: 11,  // todo: rename to z_deep
         }),
         new TiledLayer({
           name: 'XKCD tiles debug',
@@ -38,6 +41,7 @@ var map;
           color: 'rgba(255, 0, 0, 0.5)',
           onTileDraw: drawTileDebug,
           visible: false,
+          z_max: 11,  // todo: rename to z_deep
         }),
 
         new Layer({
@@ -50,7 +54,6 @@ var map;
     });
 
     function getMapTile(x, y, z) {
-      z = 18;
       var path = 'http://sublayers.net/map/' + z + '/' + x + '/' + y + '.jpg'; //'images\\map\\' + z + '\\' + x + '\\' + y + '.jpg';
       var img = new Image();
       var tile = new Tile(x, y, z, {state: 'prepare', preparing_image: img});
@@ -73,18 +76,17 @@ var map;
       return new Tile(x, y, z, {image: canvas});
     };
 
-    function drawTileDebug(map, ix, iy, x, y, tile) {
+    function drawTileDebug(map, ix, iy, iz, x, y, tsize, tile) {
       var ctx = map.ctx;
-      var tile_size = this.tile_size * map.zoom_factor;
-      ctx.font = Math.round(tile_size / 8) + "px Arial";  // todo: font size calculate
+      ctx.font = Math.round(tsize / 10) + "px Arial";  // todo: font size calculate
       ctx.fillStyle = this.options.textColor || this.options.color;
       ctx.textAlign = "center";
-      ctx.fillText("["+ix+', '+iy+"]", x + tile_size / 2, y + tile_size / 2);
+      ctx.fillText("["+ix+', '+iy+"]/"+iz, x + tsize / 2, y + tsize / 2);
       
       ctx.beginPath();
       ctx.strokeStyle = this.options.frameColor || this.options.color;
-      ctx.rect(x + 10, y + 10, tile_size - 20 - 1, tile_size - 20 - 1);
-      ctx.rect(x, y, tile_size, tile_size);/**/
+      ctx.rect(x + 10, y + 10, tsize - 20 - 1, tsize - 20 - 1);
+      ctx.rect(x, y, tsize, tsize);/**/
       ctx.stroke();
     };
 

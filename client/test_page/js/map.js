@@ -54,13 +54,17 @@ function TiledLayer(options) {
   this.tile_source = options && options.tile_source;
   this.tile_size = options && options.tile_size || this.tile_source && this.tile_source.tile_size;
   this.onTileDraw = options && options.onTileDraw;  // function(ix, iy, x, y, tile)
+  this.z_max = options && options.z_max;
 };
 
 TiledLayer.prototype = Object.create(Layer.prototype);
 
 TiledLayer.prototype.draw = function(map) {
   Layer.prototype.draw.apply(this, arguments);
-  var tile_size = this.tile_size * map.zoom_factor;
+  var level_zr = map.get_zoom_factor_step();
+  var z = this.z_max + level_zr.z;  // todo: check -1
+  var r = level_zr.r;
+  var tile_size = this.tile_size * r;
   var c = map.c.clone().mul(map.zoom_factor);  // todo: use "-this.shift"
   var w = map.canvas.width;  // todo: use property
   var h = map.canvas.height;
@@ -71,28 +75,28 @@ TiledLayer.prototype.draw = function(map) {
 
   for   (var i = ti - di; i <= ti + di; i++) {
     for (var j = tj - dj; j <= tj + dj; j++) {
-      this.tileDraw(  // todo: z
+      this.tileDraw(
         map, 
-        j, i,
+        j, i, z,
         j * tile_size - c.x + w / 2,
-        i * tile_size - c.y + h / 2
+        i * tile_size - c.y + h / 2,
+        tile_size
       );
     };
   };
 };
 
-TiledLayer.prototype.tileDraw = function(map, ix, iy, x, y) {
-  var tile_size = this.tile_size * map.zoom_factor;
+TiledLayer.prototype.tileDraw = function(map, ix, iy, iz, x, y, tsize) {
   var tile;
   if (this.tile_source)
-    tile = this.tile_source.get(ix, iy);  // todo: z
+    tile = this.tile_source.get(ix, iy, iz);
 
   if (tile && tile.image) {
-    map.ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, x, y, tile_size, tile_size);
+    map.ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, x, y, tsize, tsize);
   };
 
   if (this.onTileDraw)
-    this.onTileDraw(map, ix, iy, x, y, tile);
+    this.onTileDraw(map, ix, iy, iz, x, y, tsize, tile);
 };
 
 // todo: метод прогрева прямоугольной зоны слоя
@@ -137,9 +141,9 @@ function MapWidget(container_id, options) {  // todo: setup layers
   // todo: add properties: width, height
   this.c = options && options.location || V(0, 0);  // use property notation with getter and setter
   this.is_scrolling_now = false;
-  this.zoom_factor = 1;
-  this.zoom_min = 1/2;
+  this.zoom_min = 1 / Math.pow(2, 18-10);  // todo: вычислять на основе слоёв или вынести в настройки...?
   this.zoom_max = 1;
+  this.zoom_factor = 1;
   this.zoom_step = (this.zoom_max - this.zoom_min) / 64;
   this.zoom_target = this.zoom_factor;
 
@@ -208,6 +212,14 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this.onRepaint();
 };
 
+MapWidget.prototype.get_zoom_factor_step = function() {
+  var zf = this.zoom_factor;
+  var p = Math.log2(zf);
+  var z = Math.ceil(p);
+  var r = zf / Math.pow(2, z);
+  return {z: z, r: r};
+};
+
 MapWidget.prototype.onResize = function() {
   this.canvas.height = this.container.clientHeight;
   this.canvas.width = this.container.clientWidth;
@@ -230,9 +242,13 @@ MapWidget.prototype.onRepaint = function() {
 
   var w = canvas.width;  // todo: use property
   var h = canvas.height;
-  this.zoom_factor = (this.zoom_target * 3 + this.zoom_factor) / 4;
-  if (Math.abs(this.zoom_target - this.zoom_factor) < 0.001)
+  
+  var d_zoom = (this.zoom_target - this.zoom_factor) / 5;
+  this.zoom_factor += d_zoom;
+  if (Math.abs(this.zoom_target - this.zoom_factor) < Math.pow(2, -18)) {
+    console.log('Zoom animation cut: ' + [this.zoom_factor, this.zoom_target]);
     this.zoom_factor = this.zoom_target;
+  }
 
   //Простой скроллинг
   if(this.scrollType == 'simple') {
