@@ -158,6 +158,7 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this._scroll_velocity = new Vector(0, 0);
 
   this.scrollType = options && options.scrollType || 'simple';
+  this.location = options && options.location || 'default';
 
   this._dx = 0;  // todo: rename
   this._dy = 0;
@@ -252,6 +253,9 @@ MapWidget.prototype.onRepaint = function() {
     this.zoom_factor = this.zoom_target;
   }
 
+  this._dx /= this.zoom_factor;
+  this._dy /= this.zoom_factor;
+
   //Простой скроллинг
   if(this.scrollType == 'simple') {
     this.scroll(this._dx, this._dy);
@@ -305,7 +309,7 @@ MapWidget.prototype.locate = function(x, y) {
 };
 
 MapWidget.prototype.scroll = function(dx, dy) {  
-  this.locate(this.c.x + dx / this.zoom_factor, this.c.y + dy / this.zoom_factor);
+  this.locate(this.c.x + dx, this.c.y + dy);
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

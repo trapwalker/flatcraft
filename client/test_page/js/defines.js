@@ -16,8 +16,3 @@ var COLOR_MAP = {
 }
 
 var DEBUG = true;
-
-var INIT_STATE = {
-    'scroll' : 'sliding', //simple, inertial, sliding
-    'location' : 'goToMap',
-}

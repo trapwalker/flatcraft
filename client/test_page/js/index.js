@@ -3,7 +3,8 @@ var map;
 
   function init() {
     map = new MapWidget('workfield', {
-      scrollType: INIT_STATE.scroll,
+      scrollType: 'sliding',
+      location: 'goToMap',
       layers: [
         new Layer({
           name: 'Background',
@@ -113,6 +114,7 @@ var map;
     var locations = {
       goToShip: function() {map.locate(43.5 * 2048, 31.5 * 2048);},
       goToMap: function() {map.locate(48875*256, 106133*256);},
+      default: function() {map.locate(0, 0);},
     };
 
     gui = new dat.GUI();
@@ -135,7 +137,7 @@ var map;
     
     gui.close();
 
-    locations[INIT_STATE.location].call();
+    locations[map.location].call();
   };
   init();
 })();
