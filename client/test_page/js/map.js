@@ -274,7 +274,6 @@ MapWidget.prototype.onRepaint = function() {
   //Скроллинг с инерцией и скольжением
   if (this.scrollType == 'sliding') {
     this.scroll(this._dx, this._dy);
-
     if (this._mouse_down_flag)
       this._scroll_velocity.set(0, 0);
 
