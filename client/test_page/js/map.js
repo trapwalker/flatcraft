@@ -206,6 +206,10 @@ function MapWidget(container_id, options) {  // todo: setup layers
     self._mouse_move_flag = 0;
   });
 
+  this.canvas.addEventListener('mouseout', function() {
+    self._mouse_move_flag = 0;
+  });
+
   window.onresize = this.onResize_callback;
   // todo: Попробовать повесить событие на ресайз контейнера а не окна. Убедиться, что не затёрли старый обработчик ресайза.
 
