@@ -153,7 +153,9 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this.onRepaint_callback = (function() {self.onRepaint();});  // todo: узнать и сделать правильным способом
 
   this.container.appendChild(this.canvas);
-  
+
+  this.inertion_value = 0.033;
+  this.sliding_value = 0.15;
   this._movement_flag = 0;  // todo: rename
   this._scroll_velocity = new Vector(0, 0);
 
@@ -162,12 +164,6 @@ function MapWidget(container_id, options) {  // todo: setup layers
 
   this._dx = 0;  // todo: rename
   this._dy = 0;
-
-  // todo: settings:
-  // scrollable
-  // inertion_value
-  // zoom_factor_min
-  // zoom_factor_max
 
   var old_x;
   var old_y;
@@ -271,7 +267,7 @@ MapWidget.prototype.onRepaint = function() {
       v = this._scroll_velocity.clone();
       if (v.length2())
         this.c.add(v);
-      this._scroll_velocity.div(1.05);  // todo: extract inertial factor to options
+      this._scroll_velocity.div(this.inertion_value+1);
       if (this._scroll_velocity.length2() < 0.1)
         this._scroll_velocity.set(0, 0);
     };
@@ -281,12 +277,12 @@ MapWidget.prototype.onRepaint = function() {
     this.scroll(this._dx, this._dy);
     var v;
     if (this._movement_flag) {
-      this._scroll_velocity.add(this._dx*0.33, this._dy*0.33); // todo: extract sliding factor to options
+      this._scroll_velocity.add(this._dx*this.sliding_value, this._dy*this.sliding_value);
     };
     v = this._scroll_velocity.clone();
     if (v.length2())
       this.c.add(v);
-    this._scroll_velocity.div(1.05);  // todo: extract inertial factor to options
+    this._scroll_velocity.div(this.inertion_value+1);
     if (this._scroll_velocity.length2() < 0.1)
       this._scroll_velocity.set(0, 0);
   };
