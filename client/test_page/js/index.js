@@ -123,9 +123,9 @@ var map;
     gui.add(map, 'zoom_step_factor', 0.1, 0.9).step(0.05).name('Zoom Step Factor').listen();
 
     var gui_scroll = gui.addFolder('Scroll');
-    gui_scroll.add(map, 'scrollType', [ 'simple', 'inertial', 'sliding']).name('Type of Scroll');
-    gui_scroll.add(map, 'inertion_value', 0, 0.2).step(0.001).name('Inertion Reduction');
-    gui_scroll.add(map, 'sliding_value', 0, 1).step(0.01).name('Sliding Value');
+    gui_scroll.add(map, 'scrollType', [ 'simple', 'inertial', 'sliding']).name('Type of Scroll').listen();
+    gui_scroll.add(map, 'inertion_value', 0, 0.2).step(0.001).name('Inertion Reduction').listen();
+    gui_scroll.add(map, 'sliding_value', 0, 1).step(0.01).name('Sliding Value').listen();
 
     var gui_layers = gui.addFolder('Layers');
     gui_layers.closed = false;
