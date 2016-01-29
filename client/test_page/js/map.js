@@ -132,6 +132,8 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this.fps_stat = new AvgRing(100);
   var self = this;
   this.layers = options && options.layers || [];  // todo: скопировать options.layers, привести его к стандартному списку
+  this.zoom_animation_factor = options && options.zoom_animation_factor || 10;  // 1~100
+  this.zoom_step_factor = options && options.zoom_step_factor || 0.2;  // 0.1~0.9
 
   this.container = document.getElementById(container_id);  // todo: throw error if not found
   this.canvas = document.createElement('canvas');
@@ -174,11 +176,11 @@ function MapWidget(container_id, options) {  // todo: setup layers
     var dy = e.deltaY;
 
     if (dy > 0) {
-      self.zoom_target = self.zoom_target * 1.2;
+      self.zoom_target = self.zoom_target * (1 + self.zoom_step_factor);
       if (self.zoom_target > self.zoom_max)
         self.zoom_target = self.zoom_max;
     } else if (dy < 0) {
-      self.zoom_target = self.zoom_target * 0.8;
+      self.zoom_target = self.zoom_target * (1 - self.zoom_step_factor);
       if (self.zoom_target < self.zoom_min)
         self.zoom_target = self.zoom_min;
     };
@@ -243,10 +245,10 @@ MapWidget.prototype.onRepaint = function() {
   var w = canvas.width;  // todo: use property
   var h = canvas.height;
   
-  var d_zoom = (this.zoom_target - this.zoom_factor) / 5;
+  var d_zoom = (this.zoom_target - this.zoom_factor) / this.zoom_animation_factor;
   this.zoom_factor += d_zoom;
-  if (Math.abs(this.zoom_target - this.zoom_factor) < Math.pow(2, -18)) {
-    console.log('Zoom animation cut: ' + [this.zoom_factor, this.zoom_target]);
+  if (Math.abs(this.zoom_target - this.zoom_factor) < Math.pow(2, -18)) {  // todo: calc cutting edge by current zoom
+    //console.log('Zoom animation cut: ' + [this.zoom_factor, this.zoom_target]);
     this.zoom_factor = this.zoom_target;
   }
 
