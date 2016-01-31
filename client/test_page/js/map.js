@@ -141,7 +141,7 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this.canvas2 = document.createElement('canvas');
   this.ctx2 = this.canvas.getContext('2d');
   // todo: add properties: width, height
-  this.c = options && options.location || V(0, 0);  // use property notation with getter and setter
+  this.c = options && options.location || new Vector(0, 0);  // use property notation with getter and setter
   this.is_scrolling_now = false;
   this.zoom_min = 1 / Math.pow(2, 18-10);  // todo: вычислять на основе слоёв или вынести в настройки...?
   this.zoom_max = 1;
@@ -304,7 +304,7 @@ MapWidget.prototype.onRepaint = function() {
 };
 
 MapWidget.prototype.locate = function(x, y) {
-  this.c = (y === undefined)? x : V(x, y);
+  this.c.set(x, y);
   // todo: some recalculate?
 };
 

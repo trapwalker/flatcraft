@@ -2,10 +2,6 @@
  * Vector
  */
 
-function V(x, y) {
-    return new Vector(x, y);
-};
-
 function Vector(x, y) {
     this.x = x || 0;
     this.y = y || 0;
