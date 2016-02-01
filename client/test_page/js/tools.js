@@ -8,7 +8,6 @@ function Iter(array) {
   return iterator;
 };
 
-
 function print(text) {
   var con = document.getElementById("console");
   if (con) {
