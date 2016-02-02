@@ -107,8 +107,8 @@ var map;
         + ".." + Math.round(map.fps_stat.maximum)
         + "]", w - 300, h - 40);
     };
+    
 
-      
     // GUI
 
     var locations = {
