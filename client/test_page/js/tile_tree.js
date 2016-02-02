@@ -1,4 +1,6 @@
-﻿
+﻿//var test_img = document.createElement("IMG");
+//test_img.src = "images/grunt512.png";
+
 function load_tree(stream, callback, ctx, w, x, y) {
   // todo: Пробрасывать глубину узла от корня
   x = (x===undefined)?0:x;
@@ -22,7 +24,7 @@ function leafFunction(ctx, color, w, x, y) {
   if (c === undefined) {
     console.warn('Unknown color: "' + color + '"');
   } else if (c !== null) {
-    ctx.fillStyle = c;
+    ctx.fillStyle = c;//ctx.createPattern(test_img, 'repeat'); //c;
     ctx.fillRect(x, y, w, w);
   };
 };
