@@ -1,5 +1,6 @@
-﻿//var test_img = document.createElement("IMG");
-//test_img.src = "images/grunt512.png";
+﻿var test_img = document.createElement("IMG");
+test_img.src = "images/grunt512.png";
+var pattern = null;
 
 function load_tree(stream, callback, ctx, w, x, y) {
   // todo: Пробрасывать глубину узла от корня
@@ -16,15 +17,17 @@ function load_tree(stream, callback, ctx, w, x, y) {
   } else {
     // todo: Переиеновать коллбэк в on_leaf
     callback(ctx, node, w, x, y);
-  };
-};
+  }
+}
 
 function leafFunction(ctx, color, w, x, y) {
   c = COLOR_MAP[color];
   if (c === undefined) {
     console.warn('Unknown color: "' + color + '"');
   } else if (c !== null) {
-    ctx.fillStyle = c;//ctx.createPattern(test_img, 'repeat'); //c;
+    if (pattern == null)
+      pattern = ctx.createPattern(test_img, 'repeat');
+    ctx.fillStyle = pattern;//c;
     ctx.fillRect(x, y, w, w);
-  };
-};
+  }
+}
