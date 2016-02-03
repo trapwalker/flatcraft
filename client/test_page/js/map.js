@@ -17,7 +17,7 @@ TileSource.prototype.get = function(x, y, z) {
 function TSCache(options) {
   TileSource.apply(this, arguments);
   this.storage = {};
-};
+}
 
 TSCache.prototype = Object.create(TileSource.prototype);
 
@@ -40,12 +40,12 @@ function Layer(options) {
   this.onDraw = options && options.onDraw;
   this.visible = options && ((options.visible === undefined)?true:options.visible);
   this.options = options;  // todo: разобраться как лучше интегрировать дополнительные опции
-};
+}
 
 Layer.prototype.draw = function(map) {
   if (this.onDraw) {
     this.onDraw(map);
-  };
+  }
 };
 
 /// TiledLayer ////////////////////////////////////////////////////////////////////////////////////
@@ -55,7 +55,7 @@ function TiledLayer(options) {
   this.tile_size = options && options.tile_size || this.tile_source && this.tile_source.tile_size;
   this.onTileDraw = options && options.onTileDraw;  // function(ix, iy, x, y, tile)
   this.z_max = options && options.z_max;
-};
+}
 
 TiledLayer.prototype = Object.create(Layer.prototype);
 
@@ -82,8 +82,8 @@ TiledLayer.prototype.draw = function(map) {
         i * tile_size - c.y + h / 2,
         tile_size
       );
-    };
-  };
+    }
+  }
 };
 
 TiledLayer.prototype.tileDraw = function(map, ix, iy, iz, x, y, tsize) {
@@ -93,7 +93,7 @@ TiledLayer.prototype.tileDraw = function(map, ix, iy, iz, x, y, tsize) {
 
   if (tile && tile.image) {
     map.ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, x, y, tsize, tsize);
-  };
+  }
 
   if (this.onTileDraw)
     this.onTileDraw(map, ix, iy, iz, x, y, tsize, tile);
@@ -114,7 +114,7 @@ function Tile(x, y, z, options) {
   this.preparing_image = options && options.preparing_image;
   this.image = options && options.image;
   this.options = options;
-};
+}
 
 Tile.prototype.makeReadyCallback = function(onReady) {
   var self = this;
@@ -181,7 +181,7 @@ function MapWidget(container_id, options) {  // todo: setup layers
       self.zoom_target = self.zoom_target * (1 - self.zoom_step_factor);
       if (self.zoom_target < self.zoom_min)
         self.zoom_target = self.zoom_min;
-    };
+    }
 
     e.preventDefault();
   });
@@ -215,7 +215,7 @@ function MapWidget(container_id, options) {  // todo: setup layers
 
   this.onResize();
   this.onRepaint();
-};
+}
 
 MapWidget.prototype.get_zoom_factor_step = function() {
   var zf = this.zoom_factor;
@@ -268,8 +268,8 @@ MapWidget.prototype.onRepaint = function() {
 
       if (this._scroll_velocity.length2() < 0.1)
         this._scroll_velocity.set(0, 0);
-    };
-  };
+    }
+  }
 
   //Скроллинг с инерцией и скольжением
   if (this.scrollType == 'sliding') {
@@ -287,7 +287,7 @@ MapWidget.prototype.onRepaint = function() {
 
     if (this._scroll_velocity.length2() < 0.1)
       this._scroll_velocity.set(0, 0);
-  };
+  }
 
   this._dx = 0;
   this._dy = 0;
@@ -296,7 +296,7 @@ MapWidget.prototype.onRepaint = function() {
     var layer = layers[i];
     if (layer.visible)
       layers[i].draw(this);
-  };
+  }
 
   this._mouse_down_flag = 0;
 
