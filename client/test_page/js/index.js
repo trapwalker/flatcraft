@@ -2,9 +2,15 @@ var map;
 (function() {
 
   function init() {
+    mapTileSource = new TSCache({tile_size: 256, onGet: getMapTile});
+
     map = new MapWidget('workfield', {
       scrollType: 'sliding',
       location: 'goToMap',
+      onLocate: function(x, y) {
+        //console.log('onLocate: '+[x, y]);
+        //mapTileSource.heat(x, y, );
+      },
       layers: [
         new Layer({
           name: 'Background',
@@ -17,7 +23,7 @@ var map;
 
         new TiledLayer({
           name: 'Map tiles',
-          tile_source: new TSCache({tile_size: 256, onGet: getMapTile}),
+          tile_source: mapTileSource,
           visible: true,
           z_max: 18  // todo: rename to z_deep
         }),

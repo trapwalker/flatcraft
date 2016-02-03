@@ -5,21 +5,55 @@ function TileSource(options) {
   this.onGet = options && options.onGet;
   this.tile_size = options.tile_size;
   this.options = options;
-};
+}
 
 TileSource.prototype.get = function(x, y, z) {
   if (this.onGet) {
     return this.onGet(x, y, z);
-  };
+  }
 };
 
 /// TSCache ///////////////////////////////////////////////////////////////////////////////////////
 function TSCache(options) {
   TileSource.apply(this, arguments);
+  var self = this;
   this.storage = {};
+  this.load_queue = [];
+  this._last_heating_state = null;
+
+  this.onBackgroundHeat = function() {
+    if (self.load_queue.length) {
+      var tile = self.load_queue.pop();
+      self.get(tile.x, tile.y, tile.z);
+    }
+    setTimeout(self.onBackgroundHeat, 10);  // todo: extract to constant or settings
+  };
+  this.onBackgroundHeat();  // todo: add property 'backgroundHeatingEnable'
 }
 
 TSCache.prototype = Object.create(TileSource.prototype);
+
+TSCache.prototype.heat = function(x, y, z, r1, r2, zup, zdn) {
+  var self = this;
+  r1 = r1 === undefined?(2048 / 256 / 2):r1;
+  r2 = r2 === undefined?(r1 * 2):r2;
+  zup = zup === undefined?1:zup;
+  zdn = zdn === undefined?1:zup;
+  var heating_state = [x, y, z, r1, r2, zup, zdn].toString();
+  if (this._last_heating_state == heating_state)
+    return;
+
+  this._last_heating_state = heating_state;
+
+  function callback(ix, iy, iz) {
+    self.load_queue.push({x: x + ix, y: y + iy, z: z + iz})
+  }
+
+  this.load_queue = [];  // todo: check garbage collector rules
+
+  heat(callback, x, y, z, r1, r2, zup);  // todo: use znd/zup
+  // todo: autorun backround heating
+};
 
 TSCache.prototype.get = function(x, y, z) {
   var key = x + ':' + y + ':' + z;
@@ -59,27 +93,44 @@ function TiledLayer(options) {
 
 TiledLayer.prototype = Object.create(Layer.prototype);
 
+TiledLayer.prototype.getLevelParams = function(position, zf, w, h) {
+  var z = Math.ceil(Math.log2(zf));
+  var k = zf / Math.pow(2, z);
+  var tile_size = this.tile_size * k;
+  var c = position.clone().mul(zf);  // todo: use "-this.shift"
+  return {
+    z: z + this.z_max,
+    k: k,
+    tile_size: tile_size,
+    c: c,
+    tx: Math.floor(c.x / tile_size),
+    ty: Math.floor(c.y / tile_size),
+    dx: Math.ceil(w / tile_size / 2),
+    dy: Math.ceil(h / tile_size / 2)
+  };
+};
+
 TiledLayer.prototype.draw = function(map) {
   Layer.prototype.draw.apply(this, arguments);
-  var level_zr = map.get_zoom_factor_step();
-  var z = this.z_max + level_zr.z;  // todo: check -1
-  var r = level_zr.r;
-  var tile_size = this.tile_size * r;
-  var c = map.c.clone().mul(map.zoom_factor);  // todo: use "-this.shift"
   var w = map.canvas.width;  // todo: use property
   var h = map.canvas.height;
-  var di = Math.ceil(h / tile_size / 2);
-  var dj = Math.ceil(w / tile_size / 2);
-  var ti = Math.floor(c.y / tile_size);
-  var tj = Math.floor(c.x / tile_size);
 
-  for   (var i = ti - di; i <= ti + di; i++) {
-    for (var j = tj - dj; j <= tj + dj; j++) {
+  var level_params = this.getLevelParams(map.c, map.zoom_factor, w, h);
+  var z         = level_params.z;
+  var tile_size = level_params.tile_size;
+  var c         = level_params.c;
+  var tx        = level_params.tx;
+  var ty        = level_params.ty;
+  var dx        = level_params.dx;
+  var dy        = level_params.dy;
+
+  for   (var y = ty - dy; y <= ty + dy; y++) {
+    for (var x = tx - dx; x <= tx + dx; x++) {
       this.tileDraw(
         map, 
-        j, i, z,
-        j * tile_size - c.x + w / 2,
-        i * tile_size - c.y + h / 2,
+        x, y, z,
+        x * tile_size - c.x + w / 2,
+        y * tile_size - c.y + h / 2,
         tile_size
       );
     }
@@ -163,6 +214,9 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this.scrollType = options && options.scrollType || 'simple';
   this.location = options && options.location || 'default';
 
+  this.onLocate = options && options.onLocate;
+  this.onZoom = options && options.onZoom;
+
   this._dx = 0;  // todo: rename
   this._dy = 0;
 
@@ -217,14 +271,6 @@ function MapWidget(container_id, options) {  // todo: setup layers
   this.onRepaint();
 }
 
-MapWidget.prototype.get_zoom_factor_step = function() {
-  var zf = this.zoom_factor;
-  var p = Math.log2(zf);
-  var z = Math.ceil(p);
-  var r = zf / Math.pow(2, z);
-  return {z: z, r: r};
-};
-
 MapWidget.prototype.onResize = function() {
   this.canvas.height = this.container.clientHeight;
   this.canvas.width = this.container.clientWidth;
@@ -262,7 +308,7 @@ MapWidget.prototype.onRepaint = function() {
       this._scroll_velocity.set(this._dx, this._dy);
     } else {
       if (this._scroll_velocity.length2())
-        this.c.add(this._scroll_velocity);
+        this.scroll(this._scroll_velocity.x, this._scroll_velocity.y);  // todo: Добавить поддержку вектора
 
       this._scroll_velocity.div(this.inertion_value + 1);
 
@@ -305,6 +351,8 @@ MapWidget.prototype.onRepaint = function() {
 
 MapWidget.prototype.locate = function(x, y) {
   this.c = (y === undefined)? x : V(x, y);
+  if (this.onLocate)
+    this.onLocate(x, y);
   // todo: some recalculate?
 };
 
