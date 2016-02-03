@@ -1,4 +1,21 @@
-﻿
+﻿/*function Texturator() {
+  this.data = {};
+}
+
+Texturator.prototype.get = function(ctx, dict_node) {
+  var node;
+  if (node = dict_node.color)
+    if (this.data[node])
+      return this.data[node];
+    else
+    if (dict_node.texture) {
+      var img = new Image();
+      img.src = dict_node.texture;
+      if (this.data[node] = ctx.createPattern(img, 'repeat'))
+        return this.data[node];
+    }
+};*/
+
 function Iter(array) {
   var idx = 0;
   function iterator() {
@@ -6,7 +23,7 @@ function Iter(array) {
     return array[idx - 1];
   };
   return iterator;
-};
+}
 
 function print(text) {
   var con = document.getElementById("console");
@@ -21,8 +38,8 @@ function print(text) {
     print.log_counter++;
 
     con.scrollTop = con.scrollHeight;
-  };
-};
+  }
+}
 
 print.log_counter = 0;
 print.LOG_ITEMS_LIMIT = 100;
@@ -38,7 +55,7 @@ function AvgRing(size) {
   this.last_sum = 0;
   this.full_count = 0;
   this.value = null;
-};
+}
 
 AvgRing.prototype.add = function(value) {
   if (!value) return;
@@ -49,7 +66,7 @@ AvgRing.prototype.add = function(value) {
     var old = buffer[this._head];
     if (old)
       this.last_sum -= old;
-  };
+  }
   
   buffer[this._head] = value;
   this._head = (this._head + 1) % this.size;

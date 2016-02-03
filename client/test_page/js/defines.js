@@ -10,7 +10,7 @@ var COLOR_MAP = {
     ,'o': 'orange'
     ,'p': 'purple'
     ,'.': null
-    ,'0': 'black'
+    ,'0': {'color': 'black', 'texture': 'images/grunt512.png'}
     ,'1': null
     ,'+': 'green'
 }

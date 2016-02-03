@@ -12,14 +12,14 @@ var map;
           onDraw: function(map) {
             map.ctx.fillStyle = this.options.color;
             map.ctx.fillRect(0, 0, map.canvas.width, map.canvas.height);  // todo: use width and height properties
-          },
+          }
         }),
 
         new TiledLayer({
           name: 'Map tiles',
           tile_source: new TSCache({tile_size: 256, onGet: getMapTile}),
           visible: true,
-          z_max: 18,  // todo: rename to z_deep
+          z_max: 18  // todo: rename to z_deep
         }),
         new TiledLayer({
           name: 'Map tiles debug',
@@ -27,14 +27,14 @@ var map;
           color: 'rgba(150, 150, 255, 0.5)',
           onTileDraw: drawTileDebug,
           visible: false,
-          z_max: 18,  // todo: rename to z_deep
+          z_max: 18  // todo: rename to z_deep
         }),
 
         new TiledLayer({
           name: 'XKCD tiles',
           tile_source: new TSCache({tile_size: 2048, onGet: makeTile}),
           visible: false,
-          z_max: 11,  // todo: rename to z_deep
+          z_max: 11  // todo: rename to z_deep
         }),
         new TiledLayer({
           name: 'XKCD tiles debug',
@@ -42,15 +42,15 @@ var map;
           color: 'rgba(255, 0, 0, 0.5)',
           onTileDraw: drawTileDebug,
           visible: false,
-          z_max: 11,  // todo: rename to z_deep
+          z_max: 11  // todo: rename to z_deep
         }),
 
         new Layer({
           name: 'Debug data',
           color: 'red',
           onDraw: drawDebugInfo,
-          visible: DEBUG,
-        }),
+          visible: DEBUG
+        })
       ]
     });
 
@@ -61,7 +61,7 @@ var map;
       img.onload = tile.makeReadyCallback();
       img.src = path;
       return tile;
-    };
+    }
 
     function makeTile(x, y, z) {
       var key = x + ':' + (64 - y);
@@ -73,9 +73,9 @@ var map;
       canvas.height = this.tile_size;
       var ctx = canvas.getContext("2d");
       console.log('build tile: ' + [x, y, z] + ' data: ' + data.length);
-      load_tree(Iter(data), leafFunction, ctx, 2048);  // Перенести сюда leafFunction
+      self.load_tree(Iter(data), leafFunction, ctx, 2048);  // Перенести сюда leafFunction
       return new Tile(x, y, z, {image: canvas});
-    };
+    }
 
     function drawTileDebug(map, ix, iy, iz, x, y, tsize, tile) {
       var ctx = map.ctx;
@@ -89,7 +89,7 @@ var map;
       ctx.rect(x + 10, y + 10, tsize - 20 - 1, tsize - 20 - 1);
       ctx.rect(x, y, tsize, tsize);/**/
       ctx.stroke();
-    };
+    }
 
     function drawDebugInfo(map) {
       var ctx = map.ctx;
@@ -106,7 +106,7 @@ var map;
         + " [" + Math.round(map.fps_stat.minimum)
         + ".." + Math.round(map.fps_stat.maximum)
         + "]", w - 300, h - 40);
-    };
+    }
     
 
     // GUI
@@ -131,7 +131,7 @@ var map;
     gui_layers.closed = false;
     for (var i = 0; i < map.layers.length; i++) {
       gui_layers.add(map.layers[i], 'visible').name(map.layers[i].name);
-    };
+    }
 
     var gui_locations = gui.addFolder('Locations');
     gui_locations.closed = false;
@@ -141,6 +141,6 @@ var map;
     gui.close();
 
     locations[map.location].call();
-  };
+  }
   init();
 })();
