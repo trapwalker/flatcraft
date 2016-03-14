@@ -61,7 +61,7 @@ var map;
     });
 
     function getMapTile(x, y, z) {
-      var path = 'http://sublayers.net/map/' + z + '/' + x + '/' + y + '.jpg'; //'images\\map\\' + z + '\\' + x + '\\' + y + '.jpg';
+      var path = 'http://185.58.206.115/map/' + z + '/' + x + '/' + y + '.jpg'; //'images\\map\\' + z + '\\' + x + '\\' + y + '.jpg';
       var img = new Image();
       var tile = new Tile(x, y, z, {state: 'prepare', preparing_image: img});
       img.onload = tile.makeReadyCallback();
