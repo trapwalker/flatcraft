@@ -7,6 +7,14 @@ function V(x, y) {
 };
 
 function Vector(x, y) {
+    if (typeof x === 'object') {
+        y = x.y;
+        x = x.x;
+    }
+    else {
+        if (y == null) y = x;
+    }
+
     this.x = x || 0;
     this.y = y || 0;
 };
