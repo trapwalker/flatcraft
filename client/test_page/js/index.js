@@ -5,9 +5,21 @@ var map;
     mapTileSource = new TSCache({tile_size: 256, onGet: getMapTile});
 
     var locations = {
-      ship: new Vector(43.5 * 2048, 31.5 * 2048),
-      map: new Vector(48875*256, 106133*256),
-      zero: new Vector(0, 0),
+      ship: {
+        pos: new Vector(43.5 * 2048, 31.5 * 2048), 
+        caption: "XKCD Ship",
+        go: (function() {map.locate(this.pos);})
+      },
+      map: {
+        pos: new Vector(48875*256, 106133*256), 
+        caption: "RoadDogs map",
+        go: (function() {map.locate(this.pos);})
+      },
+      zero: {
+        pos: new Vector(0, 0), 
+        caption: "Zero point",
+        go: (function() {map.locate(this.pos);})
+      },
     };
 
     map = new MapWidget('workfield', {
@@ -142,7 +154,8 @@ var map;
     var gui_locations = gui.addFolder('Locations');
     gui_locations.closed = false;
     for (var location_name in locations) {
-      gui_locations.add({go: (function() {map.locate(locations[location_name])})}, 'go').name(location_name);
+      var location = locations[location_name];
+      gui_locations.add(location, 'go').name(location.caption);
     };
     
     gui.close();
