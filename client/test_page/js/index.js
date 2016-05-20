@@ -4,6 +4,12 @@ var map;
   function init() {
     mapTileSource = new TSCache({tile_size: 256, onGet: getMapTile});
 
+    var locations = {
+      ship: new Vector(43.5 * 2048, 31.5 * 2048),
+      map: new Vector(48875*256, 106133*256),
+      zero: new Vector(0, 0),
+    };
+
     map = new MapWidget('workfield', {
       scrollType: 'sliding',
       location: 'goToMap',
@@ -117,12 +123,6 @@ var map;
 
     // GUI
 
-    var locations = {
-      goToShip: function() {map.locate(43.5 * 2048, 31.5 * 2048);},
-      goToMap: function() {map.locate(48875*256, 106133*256);},
-      default: function() {map.locate(0, 0);},
-    };
-
     gui = new dat.GUI();
     gui.add(map, 'zoom_target', map.zoom_min, map.zoom_max).step((map.zoom_max - map.zoom_min) / 64).name('Zoom').listen();
     gui.add(map, 'zoom_animation_factor', 1, 100).step(1).name('Zoom Duration').listen();
@@ -141,12 +141,11 @@ var map;
 
     var gui_locations = gui.addFolder('Locations');
     gui_locations.closed = false;
-    gui_locations.add(locations, 'goToShip').name('Ship');
-    gui_locations.add(locations, 'goToMap').name('Map');
+    for (var location_name in locations) {
+      gui_locations.add({go: (function() {map.locate(locations[location_name])})}, 'go').name(location_name);
+    };
     
     gui.close();
-
-    locations[map.location].call();
-  }
+  };
   init();
 })();
