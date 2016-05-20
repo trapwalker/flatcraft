@@ -350,7 +350,7 @@ MapWidget.prototype.onRepaint = function() {
 };
 
 MapWidget.prototype.locate = function(x, y) {
-  this.c.set(x, y);
+  this.c = new Vector(x, y);
   if (this.onLocate)
     this.onLocate(x, y);
   // todo: some recalculate?
