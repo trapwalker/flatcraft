@@ -11,7 +11,7 @@ var map;
         go: (function() {map.locate(this.pos);})
       },
       map: {
-        pos: new Vector(48875*256, 106133*256), 
+        pos: new Vector(12504868, 27025263), 
         caption: "RoadDogs map",
         go: (function() {map.locate(this.pos);})
       },
@@ -24,7 +24,7 @@ var map;
 
     map = new MapWidget('workfield', {
       scrollType: 'sliding',
-      location: 'goToMap',
+      location: locations.map.pos,
       onLocate: function(x, y) {
         //console.log('onLocate: '+[x, y]);
         //mapTileSource.heat(x, y, );
