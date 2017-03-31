@@ -225,7 +225,7 @@ function MapWidget(container_id, options) {  // todo: setup layers
   var t;
 
   this.canvas.addEventListener('wheel', function(e) {
-    var dy = e.deltaY;
+    var dy = -e.deltaY;
 
     if (dy > 0) {
       self.zoom_target = self.zoom_target * (1 + self.zoom_step_factor);
