@@ -8,12 +8,12 @@ var map;
       ship: {
         pos: new Vector(43.5 * 2048, 31.5 * 2048), 
         caption: "XKCD Ship",
-        go: (function() {map.locate(this.pos);})
+        go: (function() {map.locate(this.pos); layer_xkcd_tiles.visible = true;})
       },
       map: {
         pos: new Vector(12504868, 27025263), 
         caption: "RoadDogs map",
-        go: (function() {map.locate(this.pos);})
+        go: (function() {map.locate(this.pos); layer_map_tiles.visible = true;})
       },
       zero: {
         pos: new Vector(0, 0), 
@@ -21,6 +21,20 @@ var map;
         go: (function() {map.locate(this.pos);})
       },
     };
+
+    layer_xkcd_tiles = new TiledLayer({
+      name: 'XKCD tiles',
+      tile_source: new TSCache({tile_size: 2048, onGet: makeTile}),
+      visible: false,
+      z_max: 11  // todo: rename to z_deep
+    });
+
+    layer_map_tiles = new TiledLayer({
+      name: 'Map tiles',
+      tile_source: mapTileSource,
+      visible: true,
+      z_max: 18  // todo: rename to z_deep
+    });
 
     map = new MapWidget('workfield', {
       scrollType: 'sliding',
@@ -39,12 +53,7 @@ var map;
           }
         }),
 
-        new TiledLayer({
-          name: 'Map tiles',
-          tile_source: mapTileSource,
-          visible: true,
-          z_max: 18  // todo: rename to z_deep
-        }),
+        layer_map_tiles,
         new TiledLayer({
           name: 'Map tiles debug',
           tile_size: 256,
@@ -54,12 +63,7 @@ var map;
           z_max: 18  // todo: rename to z_deep
         }),
 
-        new TiledLayer({
-          name: 'XKCD tiles',
-          tile_source: new TSCache({tile_size: 2048, onGet: makeTile}),
-          visible: false,
-          z_max: 11  // todo: rename to z_deep
-        }),
+        layer_xkcd_tiles,
         new TiledLayer({
           name: 'XKCD tiles debug',
           tile_size: 2048,
