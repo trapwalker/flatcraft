@@ -17,6 +17,7 @@ TileSource.prototype.get = function(x, y, z) {
 function TSCache(options) {
   TileSource.apply(this, arguments);
   var self = this;
+  this.cache_size = 0;
   this.storage = {};
   this.load_queue = [];
   this._last_heating_state = null;
@@ -61,9 +62,10 @@ TSCache.prototype.get = function(x, y, z) {
   if (tile !== undefined) return tile;
 
   tile = TileSource.prototype.get.apply(this, arguments);
-  if (tile !== undefined)
+  if (tile !== undefined) {
     this.storage[key] = tile;
-
+    this.cache_size += 1;
+  };
   return tile;
 };
 

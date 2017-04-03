@@ -57,6 +57,22 @@ function AvgRing(size) {
   this.value = null;
 }
 
+AvgRing.prototype.frame_range = function() {
+  var v_min = null;
+  var v_max = null;
+  var buffer = this._buffer;
+  if (buffer.length > 0) {
+	v_min = buffer[0];
+	v_max = buffer[0];
+
+    for (var i = 1; i < buffer.length; i++) {
+    	if (buffer[i] < v_min) v_min = buffer[i];
+  	  if (buffer[i] > v_max) v_max = buffer[i];
+    };
+  };
+  return [v_min, v_max];
+};
+
 AvgRing.prototype.add = function(value) {
   if (!value) return;
 

@@ -1,5 +1,9 @@
-﻿var NC = '+'; //Node Code
-var BASE_COLOR = 'rgb(201, 180, 237)';//'rgb(200, 255, 200)';
+﻿
+var DEBUG = true;
+
+var NC = '+'; //Node Code
+//var BASE_COLOR = 'rgb(201, 180, 237)';//'rgb(200, 255, 200)';
+var BASE_COLOR = 'rgb(50, 50, 50)';//'rgb(200, 255, 200)';
 
 var COLOR_MAP = {
     'r': 'red'
@@ -15,4 +19,22 @@ var COLOR_MAP = {
     ,'+': 'green'
 }
 
-var DEBUG = true;
+// Locations ======================================================================
+
+var locations = {
+  ship: {
+    pos: new Vector(43.5 * 2048, 31.5 * 2048), 
+    caption: "XKCD Ship",
+    go: (function() {map.locate(this.pos); layer_xkcd_tiles.visible = true;})
+  },
+  map: {
+    pos: new Vector(12482409, 27045819), 
+    caption: "RoadDogs map",
+    go: (function() {map.locate(this.pos); layer_map_tiles.visible = true;})
+  },
+  zero: {
+    pos: new Vector(0, 0), 
+    caption: "Zero point",
+    go: (function() {map.locate(this.pos);})
+  },
+};
