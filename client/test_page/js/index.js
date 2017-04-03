@@ -11,7 +11,7 @@ var map;
         go: (function() {map.locate(this.pos); layer_xkcd_tiles.visible = true;})
       },
       map: {
-        pos: new Vector(12504868, 27025263), 
+        pos: new Vector(12482409, 27045819), 
         caption: "RoadDogs map",
         go: (function() {map.locate(this.pos); layer_map_tiles.visible = true;})
       },
