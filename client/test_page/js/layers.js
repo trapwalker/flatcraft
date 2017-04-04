@@ -16,6 +16,7 @@ function drawTileDebug(map, ix, iy, iz, x, y, tsize, tile) {
   ctx.fillStyle = this.options.textColor || this.options.color;
   ctx.textAlign = "center";
   ctx.fillText("["+ix+', '+iy+"]/"+iz, x + tsize / 2, y + tsize / 2);
+  //ctx.fillText(""+Math.round(tsize), x + tsize / 2, y + tsize / 2 + 40);
   
   ctx.beginPath();
   ctx.strokeStyle = this.options.frameColor || this.options.color;
@@ -109,9 +110,26 @@ var LAYERS = {
     visible: true,
     z_max: 18,  // todo: rename to z_deep
     onTileDraw: function(map, ix, iy, iz, x, y, tsize, tile) {
+      var k = (tsize - 128) / 128;
+      //k *= k;
+	  var color = this.options.color;
+
 	  var ctx = map.ctx;
+
+	  ctx.save();
+	  ctx.globalAlpha = k;
+ 	  ctx.beginPath();
+	  ctx.strokeStyle = color;
+	  ctx.rect(x        , y        , tsize/2, tsize/2);/**/
+	  ctx.rect(x+tsize/2, y        , tsize / 2, tsize / 2);/**/
+	  ctx.rect(x, y+tsize/2        , tsize / 2, tsize / 2);/**/
+	  ctx.rect(x+tsize/2, y+tsize/2, tsize / 2, tsize / 2);/**/
+	  ctx.stroke();
+	  ctx.restore();
+
+	  
 	  ctx.beginPath();
-	  ctx.strokeStyle = this.options.color;
+	  ctx.strokeStyle = color;
 	  ctx.rect(x, y, tsize, tsize);/**/
 	  ctx.stroke();
 	},
