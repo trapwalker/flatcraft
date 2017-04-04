@@ -1,185 +1,4 @@
 
-/// TileSource ////////////////////////////////////////////////////////////////////////////////////
-function TileSource(options) {
-  this.name = options && options.name;
-  this.onGet = options && options.onGet;
-  this.tile_size = options.tile_size;
-  this.options = options;
-}
-
-TileSource.prototype.get = function(x, y, z) {
-  if (this.onGet) {
-    return this.onGet(x, y, z);
-  }
-};
-
-/// TSCache ///////////////////////////////////////////////////////////////////////////////////////
-function TSCache(options) {
-  TileSource.apply(this, arguments);
-  var self = this;
-  this.cache_size = 0;
-  this.storage = {};
-  this.load_queue = [];
-  this._last_heating_state = null;
-
-  this.onBackgroundHeat = function() {
-    if (self.load_queue.length) {
-      var tile = self.load_queue.pop();
-      self.get(tile.x, tile.y, tile.z);
-    }
-    setTimeout(self.onBackgroundHeat, 10);  // todo: extract to constant or settings
-  };
-  this.onBackgroundHeat();  // todo: add property 'backgroundHeatingEnable'
-}
-
-TSCache.prototype = Object.create(TileSource.prototype);
-
-TSCache.prototype.heat = function(x, y, z, r1, r2, zup, zdn) {
-  var self = this;
-  r1 = r1 === undefined?(2048 / 256 / 2):r1;
-  r2 = r2 === undefined?(r1 * 2):r2;
-  zup = zup === undefined?1:zup;
-  zdn = zdn === undefined?1:zup;
-  var heating_state = [x, y, z, r1, r2, zup, zdn].toString();
-  if (this._last_heating_state == heating_state)
-    return;
-
-  this._last_heating_state = heating_state;
-
-  function callback(ix, iy, iz) {
-    self.load_queue.push({x: x + ix, y: y + iy, z: z + iz})
-  }
-
-  this.load_queue = [];  // todo: check garbage collector rules
-
-  heat(callback, x, y, z, r1, r2, zup);  // todo: use znd/zup
-  // todo: autorun backround heating
-};
-
-TSCache.prototype.get = function(x, y, z) {
-  var key = x + ':' + y + ':' + z;
-  var tile = this.storage[key];
-  if (tile !== undefined) return tile;
-
-  tile = TileSource.prototype.get.apply(this, arguments);
-  if (tile !== undefined) {
-    this.storage[key] = tile;
-    this.cache_size += 1;
-  };
-  return tile;
-};
-
-/// Layer /////////////////////////////////////////////////////////////////////////////////////////
-function Layer(options) {
-  this.name = options && options.name;
-  this.shift = options && options.shift || new Vector(0, 0);
-  this.onDraw = options && options.onDraw;
-  this.visible = options && ((options.visible === undefined)?true:options.visible);
-  this.options = options;  // todo: разобраться как лучше интегрировать дополнительные опции
-}
-
-Layer.prototype.draw = function(map) {
-  if (this.onDraw) {
-    this.onDraw(map);
-  }
-};
-
-/// TiledLayer ////////////////////////////////////////////////////////////////////////////////////
-function TiledLayer(options) {
-  Layer.apply(this, arguments);
-  this.tile_source = options && options.tile_source;
-  this.tile_size = options && options.tile_size || this.tile_source && this.tile_source.tile_size;
-  this.onTileDraw = options && options.onTileDraw;  // function(ix, iy, x, y, tile)
-  this.z_max = options && options.z_max;
-}
-
-TiledLayer.prototype = Object.create(Layer.prototype);
-
-TiledLayer.prototype.getLevelParams = function(position, zf, w, h) {
-  var z = Math.ceil(Math.log2(zf));
-  var k = zf / Math.pow(2, z);
-  var tile_size = this.tile_size * k;
-  var c = position.clone().mul(zf);  // todo: use "-this.shift"
-  return {
-    z: z + this.z_max,
-    k: k,
-    tile_size: tile_size,
-    c: c,
-    tx: Math.floor(c.x / tile_size),
-    ty: Math.floor(c.y / tile_size),
-    dx: Math.ceil(w / tile_size / 2),
-    dy: Math.ceil(h / tile_size / 2)
-  };
-};
-
-TiledLayer.prototype.draw = function(map) {
-  Layer.prototype.draw.apply(this, arguments);
-  var w = map.canvas.width;  // todo: use property
-  var h = map.canvas.height;
-
-  var level_params = this.getLevelParams(map.c, map.zoom_factor, w, h);
-  var z         = level_params.z;
-  var tile_size = level_params.tile_size;
-  var c         = level_params.c;
-  var tx        = level_params.tx;
-  var ty        = level_params.ty;
-  var dx        = level_params.dx;
-  var dy        = level_params.dy;
-
-  for   (var y = ty - dy; y <= ty + dy; y++) {
-    for (var x = tx - dx; x <= tx + dx; x++) {
-      this.tileDraw(
-        map, 
-        x, y, z,
-        x * tile_size - c.x + w / 2,
-        y * tile_size - c.y + h / 2,
-        tile_size
-      );
-    }
-  }
-};
-
-TiledLayer.prototype.tileDraw = function(map, ix, iy, iz, x, y, tsize) {
-  var tile;
-  if (this.tile_source)
-    tile = this.tile_source.get(ix, iy, iz);
-
-  if (tile && tile.image) {
-    map.ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, x, y, tsize, tsize);
-  }
-
-  if (this.onTileDraw)
-    this.onTileDraw(map, ix, iy, iz, x, y, tsize, tile);
-};
-
-// todo: метод прогрева прямоугольной зоны слоя
-// todo: метод освобождения вне прямоугольной зоны слоя
-
-/// Tile //////////////////////////////////////////////////////////////////////////////////////////
-function Tile(x, y, z, options) {
-  this.x = x;
-  this.y = y;
-  this.z = z;
-  this.kind = options && options.kind;
-  this.state = options && options.state;
-
-  this.data = options && options.data;
-  this.preparing_image = options && options.preparing_image;
-  this.image = options && options.image;
-  this.options = options;
-}
-
-Tile.prototype.makeReadyCallback = function(onReady) {
-  var self = this;
-  return function() {
-    self.state = 'ready';
-    if (self.preparing_image)
-      self.image = self.preparing_image;
-    if (onReady)
-      onReady(self);
-  };
-};
-
 /// MapWidget /////////////////////////////////////////////////////////////////////////////////////
 function MapWidget(container_id, options) {  // todo: setup layers
   this.fps_stat = new AvgRing(100);
@@ -196,7 +15,9 @@ function MapWidget(container_id, options) {  // todo: setup layers
   // todo: add properties: width, height
   this.c = options && options.location || new Vector(0, 0);  // use property notation with getter and setter
   this.is_scrolling_now = false;
-  this.zoom_min = 1 / Math.pow(2, 18-10);  // todo: вычислять на основе слоёв или вынести в настройки...?
+  this.zoom_level_min = options && options.zoom_level_min || 10;
+  this.zoom_level_max = options && options.zoom_level_max || 18;
+  this.zoom_min = 1 / Math.pow(2, this.zoom_level_max-this.zoom_level_min);  // todo: вычислять на основе слоёв или вынести в настройки...?
   this.zoom_max = 1;
   this.zoom_factor = 1;
   this.zoom_step = (this.zoom_max - this.zoom_min) / 64;
@@ -363,6 +184,85 @@ MapWidget.prototype.scroll = function(dx, dy) {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+/// Layer /////////////////////////////////////////////////////////////////////////////////////////
+function Layer(options) {
+  this.name = options && options.name;
+  this.shift = options && options.shift || new Vector(0, 0);
+  this.onDraw = options && options.onDraw;
+  this.visible = options && ((options.visible === undefined)?true:options.visible);
+  this.options = options;  // todo: разобраться как лучше интегрировать дополнительные опции
+}
 
-//m = new MapWidget();
-//m.locate(43.5 * 2048, 31.5 * 2048);
+Layer.prototype.draw = function(map) {
+  if (this.onDraw) {
+    this.onDraw(map);
+  }
+};
+
+/// TiledLayer ////////////////////////////////////////////////////////////////////////////////////
+function TiledLayer(options) {
+  Layer.apply(this, arguments);
+  this.tile_source = options && options.tile_source;
+  this.tile_size = options && options.tile_size || this.tile_source && this.tile_source.tile_size;
+  this.onTileDraw = options && options.onTileDraw;  // function(ix, iy, x, y, tile)
+  this.z_max = options && options.z_max;
+}
+
+TiledLayer.prototype = Object.create(Layer.prototype);
+
+TiledLayer.prototype.getLevelParams = function(position, zf, w, h) {
+  var z = Math.ceil(Math.log2(zf));
+  var k = zf / Math.pow(2, z);
+  var tile_size = this.tile_size * k;
+  var c = position.clone().mul(zf);  // todo: use "-this.shift"
+  return {
+    z: z + this.z_max,
+    k: k,
+    tile_size: tile_size,
+    c: c,
+    tx: Math.floor(c.x / tile_size),
+    ty: Math.floor(c.y / tile_size),
+    dx: Math.ceil(w / tile_size / 2),
+    dy: Math.ceil(h / tile_size / 2)
+  };
+};
+
+TiledLayer.prototype.draw = function(map) {
+  Layer.prototype.draw.apply(this, arguments);
+  var w = map.canvas.width;  // todo: use property
+  var h = map.canvas.height;
+
+  var level_params = this.getLevelParams(map.c, map.zoom_factor, w, h);
+  var z         = level_params.z;
+  var tile_size = level_params.tile_size;
+  var c         = level_params.c;
+  var tx        = level_params.tx;
+  var ty        = level_params.ty;
+  var dx        = level_params.dx;
+  var dy        = level_params.dy;
+
+  for   (var y = ty - dy; y <= ty + dy; y++) {
+    for (var x = tx - dx; x <= tx + dx; x++) {
+      this.tileDraw(
+        map, 
+        x, y, z,
+        x * tile_size - c.x + w / 2,
+        y * tile_size - c.y + h / 2,
+        tile_size
+      );
+    }
+  }
+};
+
+TiledLayer.prototype.tileDraw = function(map, ix, iy, iz, x, y, tsize) {
+  var tile;
+  if (this.tile_source)
+    tile = this.tile_source.get(ix, iy, iz);
+
+  if (tile && tile.image) {
+    map.ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, x, y, tsize, tsize);
+  }
+
+  if (this.onTileDraw)
+    this.onTileDraw(map, ix, iy, iz, x, y, tsize, tile);
+};
