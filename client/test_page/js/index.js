@@ -23,6 +23,7 @@ var layer_background;
     gui.add(map, 'zoom_step_factor', 0.1, 0.9).step(0.05).name('Zoom Step Factor').listen();
 
     gui.addColor(LAYERS.background.options, 'color').name('Background Color').listen();
+    gui.addColor(LAYERS.map_grid.options, 'color').name('Grid color').listen();    
 
     var gui_scroll = gui.addFolder('Scroll');
     gui_scroll.add(map, 'scrollType', [ 'simple', 'inertial', 'sliding']).name('Type of Scroll').listen();

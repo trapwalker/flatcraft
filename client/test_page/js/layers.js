@@ -6,7 +6,7 @@ function getMapTile(x, y, z) {
   img.onload = tile.makeReadyCallback();
   img.src = path;
   return tile;
-}
+};
 
 mapTileSource = new TSCache({tile_size: 256, onGet: getMapTile});
 
@@ -22,7 +22,7 @@ function drawTileDebug(map, ix, iy, iz, x, y, tsize, tile) {
   ctx.rect(x + 10, y + 10, tsize - 20 - 1, tsize - 20 - 1);
   ctx.rect(x, y, tsize, tsize);/**/
   ctx.stroke();
-}
+};
 
 function drawDebugInfo(map) {
   var ctx = map.ctx;
@@ -42,7 +42,7 @@ function drawDebugInfo(map) {
     + ".." + Math.round(fps_range[1])
     + "] " + mapTileSource.cache_size,
     w - 300, h - 40);
-}
+};
 
 
 var LAYERS = {
@@ -102,6 +102,21 @@ var LAYERS = {
     z_max: 18  // todo: rename to z_deep
   }),
 
+  map_grid: new TiledLayer({
+    name: 'Map grid',
+    tile_size: 256,
+    color: 'rgba(60, 110, 60, 0.4)',
+    visible: true,
+    z_max: 18,  // todo: rename to z_deep
+    onTileDraw: function(map, ix, iy, iz, x, y, tsize, tile) {
+	  var ctx = map.ctx;
+	  ctx.beginPath();
+	  ctx.strokeStyle = this.options.color;
+	  ctx.rect(x, y, tsize, tsize);/**/
+	  ctx.stroke();
+	},
+  }),
+
   debug: new Layer({
     name: 'Debug data',
     color: 'red',
@@ -114,6 +129,7 @@ var ALL_LAYERS = [
   LAYERS.background,
   LAYERS.map_tiles,
   LAYERS.map_debug,
+  LAYERS.map_grid,
   LAYERS.xkcd_tiles,
   LAYERS.xkcd_debug,
   LAYERS.debug
