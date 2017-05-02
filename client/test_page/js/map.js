@@ -83,6 +83,16 @@ function MapWidget(container_id, options) {  // todo: setup layers
     self._mouse_move_flag = 0;
   });
 
+  this.canvas.addEventListener('dblclick', function(e) {
+    //@@
+    var w = self.container.clientWidth;
+    var h = self.container.clientHeight;
+    var px = (e.pageX - w / 2) / self.zoom_factor;
+    var py = (e.pageY - h / 2) / self.zoom_factor;
+    self.locate(px + self.c.x, py + self.c.y);
+    e.stopPropagation(0);
+  });
+
   this.canvas.addEventListener('mouseout', function() {
     self._mouse_move_flag = 0;
   });
