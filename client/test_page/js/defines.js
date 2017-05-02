@@ -25,12 +25,12 @@ var locations = {
   ship: {
     pos: new Vector(43.5 * 2048, 31.5 * 2048), 
     caption: "XKCD Ship",
-    go: (function() {map.locate(this.pos); layer_xkcd_tiles.visible = true;})
+    go: (function() {map.locate(this.pos); LAYERS.xkcd_tiles.visible = true;})
   },
   map: {
     pos: new Vector(12482409, 27045819), 
     caption: "RoadDogs map",
-    go: (function() {map.locate(this.pos); layer_map_tiles.visible = true;})
+    go: (function() {map.locate(this.pos); LAYERS.map_tiles.visible = true;})
   },
   zero: {
     pos: new Vector(0, 0), 
