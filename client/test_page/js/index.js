@@ -4,10 +4,15 @@ var layer_background;
 
   function init() {
     
-
+    // try to get start position form URL
+    var h = window.location.hash;
+    h = /\#\[(\d+),(\d+)\]/g.exec(h);
+    h = h && h.slice(1);
+    h = h && new Vector(Number(h[0]), Number(h[1]));
+    
     map = new MapWidget('workfield', {
       scrollType: 'sliding',
-      location: locations.map.pos,
+      location: h || locations.map.pos,
       onLocate: function(x, y) {
         //console.log('onLocate: '+[x, y]);
         //mapTileSource.heat(x, y, );
