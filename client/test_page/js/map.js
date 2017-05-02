@@ -87,9 +87,12 @@ function MapWidget(container_id, options) {  // todo: setup layers
     //@@
     var w = self.container.clientWidth;
     var h = self.container.clientHeight;
-    var px = (e.pageX - w / 2) / self.zoom_factor;
-    var py = (e.pageY - h / 2) / self.zoom_factor;
-    self.locate(px + self.c.x, py + self.c.y);
+    var new_x = (e.pageX - w / 2) / self.zoom_factor + self.c.x;
+    var new_y = (e.pageY - h / 2) / self.zoom_factor + self.c.y;
+    self.locate(new_x, new_y);
+
+    self.update_url_position();
+    
     e.stopPropagation(0);
   });
 
@@ -182,10 +185,18 @@ MapWidget.prototype.onRepaint = function() {
   window.requestAnimationFrame(this.onRepaint_callback);
 };
 
+MapWidget.prototype.update_url_position = function() {
+  // update URL
+  var redirect = '#[' + Math.round(this.c.x) + ',' + Math.round(this.c.y) + ']';
+  history.pushState('', '', redirect);
+};
+
 MapWidget.prototype.locate = function(x, y) {
   this.c = new Vector(x, y);
   if (this.onLocate)
     this.onLocate(x, y);
+
+  //this.update_url_position();
   // todo: some recalculate?
 };
 
