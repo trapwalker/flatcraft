@@ -43,6 +43,16 @@ function drawDebugInfo(map) {
     + ".." + Math.round(fps_range[1])
     + "] " + mapTileSource.cache_size,
     w - 300, h - 40);
+
+
+  var dt_range = map.dt_stat.frame_range();
+  ctx.fillText(
+    "dt=" + Math.round(map.dt_stat.avg() * 1000)
+    + " [" + Math.round(dt_range[0] * 1000)
+    + ".." + Math.round(dt_range[1] * 1000)
+    + "] ",
+    w - 300, h - 60);
+
 };
 
 

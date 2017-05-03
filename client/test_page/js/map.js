@@ -2,6 +2,7 @@
 /// MapWidget /////////////////////////////////////////////////////////////////////////////////////
 function MapWidget(container_id, options) {  // todo: setup layers
   this.fps_stat = new AvgRing(100);
+  this.dt_stat = new AvgRing(100);
   var self = this;
   this.layers = options && options.layers || [];  // todo: скопировать options.layers, привести его к стандартному списку
   this.zoom_animation_factor = options && options.zoom_animation_factor || 10;  // 1~100
@@ -119,6 +120,7 @@ MapWidget.prototype.onRepaint = function() {
   var dt = t1?(t1 - this.t):null;
   var fps = Math.round(1 / dt);
   this.fps_stat.add(fps);
+  this.dt_stat.add(dt);
   this.t = t1;
 
   var layers = this.layers;
