@@ -64,6 +64,24 @@ function MapWidget(container_id, options) {  // todo: setup layers
     e.preventDefault();
   });
 
+  document.addEventListener("keydown", function(e) {
+    const key_code = e.keyCode;
+    console.log("Key: " + key_code);
+
+
+    if (key_code == 107) {  // Plus
+      self.zoom_target = self.zoom_target * (1 + self.zoom_step_factor);
+      if (self.zoom_target > self.zoom_max)
+        self.zoom_target = self.zoom_max;
+      e.preventDefault();
+    } else if (key_code == 109) { // Minus
+      self.zoom_target = self.zoom_target * (1 - self.zoom_step_factor);
+      if (self.zoom_target < self.zoom_min)
+        self.zoom_target = self.zoom_min;
+      e.preventDefault();
+    }
+  });
+
   this.canvas.addEventListener('mousedown', function(e) {
     self._mouse_move_flag = 1;
     self._mouse_down_flag = 1;
