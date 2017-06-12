@@ -1,14 +1,37 @@
 // Layers =========================================================================
-function getMapTile(x, y, z) {
-  var path = 'http://roaddogs.ru/map/merged/' + z + '/' + x + '/' + y + '.jpg'; //'images\\map\\' + z + '\\' + x + '\\' + y + '.jpg';
-  var img = new Image();
-  var tile = new Tile(x, y, z, {state: 'prepare', preparing_image: img});
-  img.onload = tile.makeReadyCallback();
-  img.src = path;
-  return tile;
+
+function makeTileGetter(uriBuilder) {
+  return function(x, y, z) {
+    var path = uriBuilder(x, y, z);
+    var img = new Image();
+    var tile = new Tile(x, y, z, {state: 'prepare', preparing_image: img});
+    img.onload = tile.makeReadyCallback();
+    img.src = path;
+    return tile;
+  };
 };
 
-mapTileSource = new TSCache({tile_size: 256, onGet: getMapTile});
+//mapTileSource = new TSCache({
+//  tile_size: 256, 
+//  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/merged/' + z + '/' + x + '/' + y + '.jpg';})
+//});
+
+tsMerged = new TSCache({
+  tile_size: 256, 
+  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/merged/' + z + '/' + x + '/' + y + '.jpg';})
+});
+
+tsBack = new TSCache({
+  tile_size: 256, 
+  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/back/' + z + '/' + x + '/' + y + '.jpg';})
+});
+
+tsFront = new TSCache({
+  tile_size: 256, 
+  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/front/' + z + '/' + x + '/' + y + '.png';})
+});
+
+
 
 function drawTileDebug(map, ix, iy, iz, x, y, tsize, tile) {
   var ctx = map.ctx;
@@ -41,7 +64,7 @@ function drawDebugInfo(map) {
     "fps=" + Math.round(map.fps_stat.avg())
     + " [" + Math.round(fps_range[0])
     + ".." + Math.round(fps_range[1])
-    + "] " + mapTileSource.cache_size,
+    + "] " + (tsMerged.cache_size + tsBack.cache_size + tsFront.cache_size),
     w - 300, h - 40);
 
 
@@ -97,9 +120,23 @@ var LAYERS = {
     z_max: 11  // todo: rename to z_deep
   }),
 
+  map_tiles_back: new TiledLayer({
+    name: 'Map tiles back',
+    tile_source: tsBack,
+    visible: false,
+    z_max: 18  // todo: rename to z_deep
+  }),
+
+  map_tiles_front: new TiledLayer({
+    name: 'Map tiles front',
+    tile_source: tsFront,
+    visible: false,
+    z_max: 18  // todo: rename to z_deep
+  }),
+
   map_tiles: new TiledLayer({
-    name: 'Map tiles',
-    tile_source: mapTileSource,
+    name: 'Map tiles (mixed)',
+    tile_source: tsMerged,
     visible: true,
     z_max: 18  // todo: rename to z_deep
   }),
@@ -155,6 +192,8 @@ var LAYERS = {
 
 var ALL_LAYERS = [
   LAYERS.background,
+  LAYERS.map_tiles_back,
+  LAYERS.map_tiles_front,
   LAYERS.map_tiles,
   LAYERS.map_debug,
   LAYERS.map_grid,
