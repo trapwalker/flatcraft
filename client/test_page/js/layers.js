@@ -16,19 +16,21 @@ function makeTileGetter(uriBuilder) {
 //  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/merged/' + z + '/' + x + '/' + y + '.jpg';})
 //});
 
+var TILE_EXT = '.png';
+
 tsMerged = new TSCache({
   tile_size: 256, 
-  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/merged/' + z + '/' + x + '/' + y + '.jpg';})
+  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/merged/' + z + '/' + x + '/' + y + TILE_EXT;})
 });
 
 tsBack = new TSCache({
   tile_size: 256, 
-  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/back/' + z + '/' + x + '/' + y + '.jpg';})
+  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/back/' + z + '/' + x + '/' + y + TILE_EXT;})
 });
 
 tsFront = new TSCache({
   tile_size: 256, 
-  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/front/' + z + '/' + x + '/' + y + '.png';})
+  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/front/' + z + '/' + x + '/' + y + TILE_EXT;})
 });
 
 
