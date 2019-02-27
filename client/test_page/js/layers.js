@@ -30,9 +30,14 @@ tsBack = new TSCache({
 
 tsFront = new TSCache({
   tile_size: 256, 
-  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/front/' + z + '/' + x + '/' + y + TILE_EXT;})
+//  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/front/' + z + '/' + x + '/' + y + TILE_EXT;})
+  onGet: makeTileGetter(function(x, y, z) {return 'https://a.tile.openstreetmap.org/' + z + '/' + x + '/' + y + TILE_EXT;})
 });
 
+tsOSM = new TSCache({
+  tile_size: 256,
+  onGet: makeTileGetter(function(x, y, z) {return 'https://a.tile.openstreetmap.org/' + z + '/' + x + '/' + y + TILE_EXT;})
+});
 
 
 function drawTileDebug(map, ix, iy, iz, x, y, tsize, tile) {
@@ -66,7 +71,7 @@ function drawDebugInfo(map) {
     "fps=" + Math.round(map.fps_stat.avg())
     + " [" + Math.round(fps_range[0])
     + ".." + Math.round(fps_range[1])
-    + "] " + (tsMerged.cache_size + tsBack.cache_size + tsFront.cache_size),
+    + "] " + (tsMerged.cache_size + tsBack.cache_size + tsFront.cache_size + tsOSM.cache_size),  // todo: automate cache size counting
     w - 300, h - 40);
 
 
