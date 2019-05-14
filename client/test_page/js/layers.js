@@ -13,31 +13,36 @@ function makeTileGetter(uriBuilder) {
 
 //mapTileSource = new TSCache({
 //  tile_size: 256, 
-//  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/merged/' + z + '/' + x + '/' + y + '.jpg';})
+//  onGet: makeTileGetter(function(x, y, z) {return `http://roaddogs.ru/map/merged/${z}/${x}/${y}.jpg`;})
 //});
 
 var TILE_EXT = '.png';
 
 tsMerged = new TSCache({
   tile_size: 256, 
-  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/merged/' + z + '/' + x + '/' + y + TILE_EXT;})
+  onGet: makeTileGetter(function(x, y, z) {return `http://roaddogs.ru/map/merged/${z}/${x}/${y}${TILE_EXT}`;})
 });
 
 tsBack = new TSCache({
   tile_size: 256, 
   onGet: makeTileGetter(function(x, y, z) {return `http://roaddogs.ru/map/back/${z}/${x}/${y}${TILE_EXT}`;})
-//  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/back/' + z + '/' + x + '/' + y + TILE_EXT;})
+//  onGet: makeTileGetter(function(x, y, z) {return `http://roaddogs.ru/map/back/${z}/${x}/${y}${TILE_EXT}`;})
 });
 
 tsFront = new TSCache({
   tile_size: 256, 
-//  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/front/' + z + '/' + x + '/' + y + TILE_EXT;})
-  onGet: makeTileGetter(function(x, y, z) {return 'https://a.tile.openstreetmap.org/' + z + '/' + x + '/' + y + TILE_EXT;})
+//  onGet: makeTileGetter(function(x, y, z) {return `http://roaddogs.ru/map/front/${z}/${x}/${y}${TILE_EXT}`;})
+  onGet: makeTileGetter(function(x, y, z) {return `https://a.tile.openstreetmap.org/${z}/${x}/${y}${TILE_EXT}`;})
 });
 
 tsOSM = new TSCache({
   tile_size: 256,
-  onGet: makeTileGetter(function(x, y, z) {return 'https://a.tile.openstreetmap.org/' + z + '/' + x + '/' + y + TILE_EXT;})
+  onGet: makeTileGetter(function(x, y, z) {return `https://a.tile.openstreetmap.org/${z}/${x}/${y}${TILE_EXT}`;})
+});
+
+tsStrava = new TSCache({
+  tile_size: 512,
+  onGet: makeTileGetter(function(x, y, z) {return `https://heatmap-external-a.strava.com/tiles/all/hot/${z}/${x}/${y}.png`;})
 });
 
 
@@ -111,7 +116,7 @@ var LAYERS = {
         canvas.height = this.tile_size;
         var ctx = canvas.getContext("2d");
         console.log('build tile: ' + [x, y, z] + ' data: ' + data.length);
-        self.load_tree(Iter(data), leafFunction, ctx, 2048);  // Перенести сюда leafFunction
+        self.load_tree(Iter(data), leafFunction, ctx, 2048);  // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ leafFunction
         return new Tile(x, y, z, {image: canvas});
       }
     }),
@@ -146,6 +151,13 @@ var LAYERS = {
     name: 'Map tiles (mixed)',
     tile_source: tsMerged,
     visible: true,
+    z_max: 18  // todo: rename to z_deep
+  }),
+
+  map_tiles_strava: new TiledLayer({
+    name: 'Strava heat map',
+    tile_source: tsStrava,
+    visible: false,
     z_max: 18  // todo: rename to z_deep
   }),
 
@@ -207,5 +219,6 @@ var ALL_LAYERS = [
   LAYERS.map_grid,
   LAYERS.xkcd_tiles,
   LAYERS.xkcd_debug,
+  LAYERS.map_tiles_strava,
   LAYERS.debug
 ];
