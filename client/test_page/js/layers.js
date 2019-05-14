@@ -25,7 +25,8 @@ tsMerged = new TSCache({
 
 tsBack = new TSCache({
   tile_size: 256, 
-  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/back/' + z + '/' + x + '/' + y + TILE_EXT;})
+  onGet: makeTileGetter(function(x, y, z) {return `http://roaddogs.ru/map/back/${z}/${x}/${y}${TILE_EXT}`;})
+//  onGet: makeTileGetter(function(x, y, z) {return 'http://roaddogs.ru/map/back/' + z + '/' + x + '/' + y + TILE_EXT;})
 });
 
 tsFront = new TSCache({
