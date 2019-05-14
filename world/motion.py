@@ -8,12 +8,12 @@ class Motion(NamedTuple):
     p0: Position
     v: Vector = Vector(0)
 
-    def to_time(self, t, v_new: Vector = None) -> 'Motion':
+    def to_time(self, t, *, v: Vector = None) -> 'Motion':
         v_old = self.v
         return Motion(
             t0=t,
             p0=self.p0 + v_old * (t - self.t0),
-            v=v_old if v_new is None else v_new,
+            v=v_old if v is None else v,
         )
 
     def intersect(self, m2: 'Motion', r: float):
