@@ -10,15 +10,20 @@ class Vector(complex):
     def from_polar(cls, r, fi):
         return cls(rect(r, fi))
 
+    @property
     def polar(self):
         return polar(self)
 
     @property
-    def direction(self):
+    def r(self):
+        return self.polar()[0]
+
+    @property
+    def fi(self):
         return self.polar()[1]
 
     def angle_to(self, another_vector: 'Vector') -> float:
-        return another_vector.direction - self.direction
+        return another_vector.fi - self.fi
 
     def shift_to(self, r: float, fi: float) -> 'Vector':
         return self + Vector.from_polar(r, fi)
@@ -29,7 +34,7 @@ class Vector(complex):
 
 class Position(Vector):
     def direction_to(self, another_position: 'Position') -> float:
-        return (another_position - self).direction
+        return (another_position - self).fi
 
     def dist_to(self, another_position: 'Position') -> float:
         return abs(another_position - self)
