@@ -1,6 +1,5 @@
 
 from .vector import Position, Vector
-from math import sqrt
 from typing import NamedTuple
 
 
@@ -29,7 +28,7 @@ class Motion(NamedTuple):
         dd = bb ** 2 - 4 * aa * cc
         if dd <= 0:
             # No motion double intersects with radius r
-            return
+            return None, None
 
         dd = dd ** 0.5
 
