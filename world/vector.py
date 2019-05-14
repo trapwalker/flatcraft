@@ -1,15 +1,17 @@
 
-import cmath
-from cmath import pi, e
+from cmath import pi, e, rect, polar
 
 
 class Vector(complex):
+    x = complex.real
+    y = complex.imag
+
     @classmethod
     def from_polar(cls, r, fi):
-        return cls(cmath.rect(r, fi))
+        return cls(rect(r, fi))
 
     def polar(self):
-        return cmath.polar(self)
+        return polar(self)
 
     @property
     def direction(self):
@@ -37,3 +39,6 @@ class Position(Vector):
             return type(self)((self - around) * e ** (1j * angle) + around)
 
         return super().turn(angle)
+
+
+__ALL__ = [pi, e, Vector, Position]
