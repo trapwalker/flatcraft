@@ -9,11 +9,6 @@ class Motion(NamedTuple):
     p0: Position
     v: Vector = Vector(0)
 
-    # def __init__(self, t0, p0, v=Vector(0)):
-    #     self.t0 = t0
-    #     self.p0 = p0
-    #     self.v = v
-
     def to_time(self, t, v_new: Vector = None) -> 'Motion':
         v_old = self.v
         return Motion(
