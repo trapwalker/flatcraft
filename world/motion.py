@@ -32,6 +32,11 @@ class Motion(NamedTuple):
 
         dd = sqrt(dd)
 
+        early_time = max(m1.t0, m2.t0)
         t1 = (-bb - dd) / (2 * aa)
         t2 = (-bb + dd) / (2 * aa)
-        return t1, t2
+        # Deop
+        return (
+            t1 if t1 >= early_time else None,
+            t2 if t2 >= early_time else None,
+        )

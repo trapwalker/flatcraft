@@ -28,11 +28,12 @@ class MotionUsage(unittest.TestCase):
         c = self.c
         c5 = self.c5
         a5 = self.a5
-        tt = (8.0, 10.0)
-        self.assertEqual(tt, c.intersect(a, 1), 'Intersection')
-        self.assertEqual(tt, a.intersect(c, 1), 'Reversed intersection')
-        self.assertEqual(tt, a.intersect(c5, 1), 'Time shifted intersection')
-        self.assertEqual(tt, c.intersect(a5, 1), 'Stationary time shifted intersection')
+        self.assertEqual((8.0, 10.0), c.intersect(a, 1), 'Intersection')
+        self.assertEqual((8.0, 10.0), a.intersect(c, 1), 'Reversed intersection')
+        self.assertEqual((8.0, 10.0), a.intersect(c5, 1), 'Time shifted intersection')
+        self.assertEqual((8.0, 10.0), c.intersect(a5, 1), 'Stationary time shifted intersection')
+        self.assertEqual((None, 10.0), c.to_time(8.5).intersect(a5, 1), 'Motion started in')
+        self.assertEqual((None, None), c.to_time(11.5).intersect(a5, 1), 'Motion started after')
 
 
 if __name__ == '__main__':
