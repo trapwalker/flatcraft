@@ -1,5 +1,11 @@
 import unittest
 import math
+import timeit
+
+
+def lstrip_code_block(text: str):
+    left_pad = len(text) - len(text.lstrip())
+    return '\n'.join(s[left_pad:] for s in text.split('\n'))
 
 
 class MotionUsage(unittest.TestCase):
@@ -46,6 +52,28 @@ class MotionUsage(unittest.TestCase):
         self.assertNotEqual((None, None), subtangential_intersection, 'Motion subtangentially is intersect')
         self.assertTrue(math.isclose(*subtangential_intersection, rel_tol=1e-4), 'Subtangential intersection times is too close')
         self.assertFalse(math.isclose(*subtangential_intersection, rel_tol=1e-5), 'Subtangential intersection times is too close, but not absolutely')
+
+        task_size = 100_000
+        task_time = timeit.timeit(
+            lstrip_code_block("""\
+                Motion(
+                    t0=0, 
+                    p0=Position(8, 1), 
+                    v=Vector(0, 1),
+                ).intersect(
+                    Motion(t0=0, p0=Position(10, 10)).to_time(0, v=Vector(-1e-10, 0)), 
+                    r=2,
+                )
+            """),
+            lstrip_code_block("""\
+                import sys
+                sys.path.append('..')
+                from world.motion import Motion
+                from world.vector import Vector, Position
+            """),
+            number=task_size,
+        )
+        print(f'Calc {task_size} intersection over {task_time:.3f}s')
 
 
 if __name__ == '__main__':
