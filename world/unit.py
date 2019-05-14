@@ -12,26 +12,30 @@ class Unit:
 
 
 class Motion:
-    time: float
-    start_position: Position
-    velocity: Vector
+    t0: float
+    p0: Position
+    v: Vector
 
-    def __init__(self, time, start_position, velocity=Vector(0)):
-        self.time = time
-        self.start_position = start_position
-        self.velocity = velocity
+    def __init__(self, t, p0, v=Vector(0)):
+        self.t = t
+        self.p0 = p0
+        self.v = v
 
-    def to_time(self, t, new_velocity: Vector = None) -> 'Motion':
-        old_velocity = self.velocity
+    def to_time(self, t, v_new: Vector = None) -> 'Motion':
+        v_old = self.v
         return Motion(
-            time=t,
-            start_position=self.start_position + old_velocity * (t - self.time),
-            velocity=old_velocity if new_velocity is None else new_velocity,
+            t=t,
+            p0=self.p0 + v_old * (t - self.t),
+            v=v_old if v_new is None else v_new,
         )
 
     def intersect(self, m2: 'Motion', r: float):
-        s = self.start_position - m2.start_position
-        v = self.velocity - m2.velocity
+        m1 = self
+        a = m1.p0 - m2.p0 - m1.v * m1.t + m2.v * m2.t
+        b = m1.v - m2.v
+        # | a + t*b | < r
+
+
         # TODO: calc intersection in continuum
 
 
