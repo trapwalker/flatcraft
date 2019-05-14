@@ -19,9 +19,12 @@ class MotionUsage(unittest.TestCase):
     def test_compare(self):
         self.assertEqual(self.a, self.a, 'Self compare')
         self.assertEqual(self.a, self.aa, 'Same compare')
+        self.assertEqual(self.a, self.a.to_time(self.a.t0), 'Zero time shifted immobility')
+        self.assertEqual(self.c, self.c.to_time(self.c.t0), 'Zero time shifted motion')
 
         self.assertNotEqual(self.a, self.c, 'Not equal compare')
         self.assertNotEqual(self.a, self.a5, 'Time shifted compare')
+
 
     def test_intersect(self):
         a = self.a
