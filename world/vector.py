@@ -7,7 +7,7 @@ class Vector(complex):
     y = complex.imag
 
     @classmethod
-    def from_polar(cls, r, fi):
+    def from_polar(cls, r: float, fi: float):
         return cls(rect(r, fi))
 
     @property
