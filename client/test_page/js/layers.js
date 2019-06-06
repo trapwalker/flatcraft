@@ -143,14 +143,14 @@ var LAYERS = {
   map_tiles_front: new TiledLayer({
     name: 'Map tiles front',
     tile_source: tsFront,
-    visible: false,
+    visible: true,
     z_max: 18  // todo: rename to z_deep
   }),
 
   map_tiles: new TiledLayer({
     name: 'Map tiles (mixed)',
     tile_source: tsMerged,
-    visible: true,
+    visible: false,
     z_max: 18  // todo: rename to z_deep
   }),
 

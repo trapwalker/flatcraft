@@ -3,7 +3,7 @@ var DEBUG = true;
 
 var NC = '+'; //Node Code
 //var BASE_COLOR = 'rgb(201, 180, 237)';//'rgb(200, 255, 200)';
-var BASE_COLOR = 'rgb(50, 50, 50)';//'rgb(200, 255, 200)';
+var BASE_COLOR = 'rgb(200, 200, 200)';//'rgb(50, 50, 50)';//'rgb(200, 255, 200)';
 
 var COLOR_MAP = {
     'r': 'red'
@@ -22,6 +22,11 @@ var COLOR_MAP = {
 // Locations ======================================================================
 
 var locations = {
+  bel: {
+    pos: new Vector(40373076,22579095), 
+    caption: "XKCD Ship",
+    go: (function() {map.locate(this.pos); LAYERS.xkcd_tiles.visible = true;})
+  },
   ship: {
     pos: new Vector(43.5 * 2048, 31.5 * 2048), 
     caption: "XKCD Ship",

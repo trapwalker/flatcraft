@@ -12,12 +12,13 @@ var layer_background;
     
     map = new MapWidget('workfield', {
       scrollType: 'sliding',
-      location: h || locations.map.pos,
+      location: h || locations.bel.pos,
       onLocate: function(x, y) {
         //console.log('onLocate: '+[x, y]);
         //mapTileSource.heat(x, y, );
       },
       layers: ALL_LAYERS
+      ,zoom_level_min: 5
     });
 
     // GUI
