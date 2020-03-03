@@ -95,3 +95,24 @@ Tile.prototype.makeReadyCallback = function(onReady) {
       onReady(self);
   };
 };
+
+class BaseClass {
+
+  constructor(a, b) {
+    this.a = a
+    this.b = b;
+  }
+}
+
+class TetsClass extends BaseClass {
+  constructor(a, b, c, d) {
+    super();
+    this.c = c;
+    this.d = d;
+  }
+}
+
+delete BaseClass;
+let test = new TetsClass(3, 4,)
+
+console.log(test)
