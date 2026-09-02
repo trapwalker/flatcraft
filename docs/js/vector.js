@@ -1,206 +1,153 @@
+"use strict";
 /**
  * Vector
+ *
+ * Preserves the original loosely-typed API: every method accepts either
+ * two numbers `(x, y)`, a single number (used for both axes), or an
+ * object shaped like `{x, y}`.
  */
-
-function Vector(x, y) {
-    if (typeof x === 'object') {
-        y = x.y;
-        x = x.x;
+class Vector {
+    constructor(x, y) {
+        const [rx, ry] = Vector._resolve(x, y);
+        this.x = rx || 0;
+        this.y = ry || 0;
     }
-    else {
-        if (y == null) y = x;
+    static _resolve(x, y) {
+        if (typeof x === 'object' && x !== null) {
+            return [x.x, x.y];
+        }
+        if (y == null)
+            y = x;
+        return [x, y];
     }
-
-    this.x = x || 0;
-    this.y = y || 0;
-};
-
-Vector.prototype.sub = function(x, y) {
-    if (typeof x === 'object') {
-        y = x.y;
-        x = x.x;
+    sub(x, y) {
+        const [rx, ry] = Vector._resolve(x, y);
+        this.x -= rx || 0;
+        this.y -= ry || 0;
+        return this;
     }
-    else {
-        if (y == null) y = x;
+    add(x, y) {
+        const [rx, ry] = Vector._resolve(x, y);
+        this.x += rx || 0;
+        this.y += ry || 0;
+        return this;
     }
-    this.x -= x || 0;
-    this.y -= y || 0;
-    return this;
-};
-
-Vector.prototype.add = function(x, y) {
-    if (typeof x === 'object') {
-        y = x.y;
-        x = x.x;
+    mul(x, y) {
+        const [rx, ry] = Vector._resolve(x, y);
+        this.x *= rx || 0;
+        this.y *= ry || 0;
+        return this;
     }
-    else {
-        if (y == null) y = x;
+    div(x, y) {
+        const [rx, ry] = Vector._resolve(x, y);
+        this.x /= rx || 0;
+        this.y /= ry || 0;
+        return this;
     }
-    this.x += x || 0;
-    this.y += y || 0;
-    return this;
-};
-
-Vector.prototype.mul = function(x, y) {
-    if (typeof x === 'object') {
-        y = x.y;
-        x = x.x;
+    set(x, y) {
+        const [rx, ry] = Vector._resolve(x, y);
+        this.x = rx || 0;
+        this.y = ry || 0;
+        return this;
     }
-    else {
-        if (y == null) y = x;
+    normalize() {
+        const length = this.length();
+        if (length > 0) {
+            this.x /= length;
+            this.y /= length;
+        }
+        return this;
     }
-    this.x *= x || 0;
-    this.y *= y || 0;
-    return this;
-};
-
-Vector.prototype.div = function(x, y) {
-    if (typeof x === 'object') {
-        y = x.y;
-        x = x.x;
+    length() {
+        return Math.sqrt(this.x * this.x + this.y * this.y);
     }
-    else {
-        if (y == null) y = x;
+    length2() {
+        return this.x * this.x + this.y * this.y;
     }
-    this.x /= x || 0;
-    this.y /= y || 0;
-    return this;
-};
-
-Vector.prototype.set = function(x, y) {
-    if (typeof x === 'object') {
-        y = x.y;
-        x = x.x;
+    distance(v) {
+        const x = this.x - v.x;
+        const y = this.y - v.y;
+        return Math.sqrt(x * x + y * y);
     }
-    else {
-        if (y == null) y = x;
+    distance2(v) {
+        const x = this.x - v.x;
+        const y = this.y - v.y;
+        return x * x + y * y;
     }
-    this.x = x || 0;
-    this.y = y || 0;
-    return this;
-};
-
-Vector.prototype.normalize = function() {
-    var length = this.length();
-    if (length > 0) {
-        this.x /= length;
-        this.y /= length;
-    };
-    return this;
-};
-
-Vector.prototype.length = function() {
-    return Math.sqrt(this.x * this.x + this.y * this.y);
-};
-
-Vector.prototype.length2 = function() {
-    return this.x * this.x + this.y * this.y;
-};
-
-Vector.prototype.distance = function(v) {
-    var x = this.x - v.x;
-    var y = this.y - v.y;
-    return Math.sqrt(x * x + y * y);
-};
-
-Vector.prototype.distance2 = function(v) {
-    var x = this.x - v.x;
-    var y = this.y - v.y;
-    return x * x + y * y;
-};
-
-
-Vector.prototype.lerp = function(v, t) {
-    this.x += (v.x - this.x) * t;
-    this.y += (v.y - this.y) * t;
-    return this;
-};
-
-Vector.prototype.toString = function() {
-    return '(x:' + this.x + ', y:' + this.y + ')';
-};
-
-Vector.prototype.clone = function() {
-    return new Vector(this.x, this.y);
-};
-
-Vector.prototype.angle = function() {
-    return Math.atan2(this.y, this.x);
-};
-
-Vector.prototype.angleTo = function(v) {
-    var dx = v.x - this.x,
-        dy = v.y - this.y;
-    return Math.atan2(dy, dx);
-};
-
-Vector.prototype.scale = function(s) {
-    this.x *= s;
-    this.y *= s;
-    return this;
-};
-
-Vector.prototype.neg = function() {
-    this.x *= -1;
-    this.y *= -1;
-    return this;
-};
-
-Vector.add = function(v1, v2) {
-    if (v2.x != null && v2.y != null) {
-        return new Vector(
-        v1.x + v2.x,
-        v1.y + v2.y);
-    } else {
-        return new Vector(
-        v1.x + v2,
-        v1.y + v2);
-    };
-};
-
-Vector.sub = function(v1, v2) {
-    if (v2.x != null && v2.y != null) {
-        return new Vector(
-        v1.x - v2.x,
-        v1.y - v2.y);
-    } else {
-        return new Vector(
-        v1.x - v2,
-        v1.y - v2);
-    };
-};
-
-Vector.mul = function(v1, v2) {
-    if (v2.x != null && v2.y != null) {
-        return new Vector(
-        v1.x * v2.x,
-        v1.y * v2.y);
-    } else {
-        return new Vector(
-        v1.x * v2,
-        v1.y * v2);
-    };
-};
-
-Vector.div = function(v1, v2) {
-    if (v2.x != null && v2.y != null) {
-        return new Vector(
-        v1.x / v2.x,
-        v1.y / v2.y);
-    } else {
-        return new Vector(
-        v1.x / v2,
-        v1.y / v2);
-    };
-};
-
-Vector.random = function() {
-    return new Vector(
-        Math.random() * 2 - 1,
-        Math.random() * 2 - 1
-    );
-};
-
-Vector.scale = function(v, s) {
-    return v.clone().scale(s);
-};
+    lerp(v, t) {
+        this.x += (v.x - this.x) * t;
+        this.y += (v.y - this.y) * t;
+        return this;
+    }
+    toString() {
+        return '(x:' + this.x + ', y:' + this.y + ')';
+    }
+    clone() {
+        return new Vector(this.x, this.y);
+    }
+    angle() {
+        return Math.atan2(this.y, this.x);
+    }
+    angleTo(v) {
+        const dx = v.x - this.x;
+        const dy = v.y - this.y;
+        return Math.atan2(dy, dx);
+    }
+    scale(s) {
+        this.x *= s;
+        this.y *= s;
+        return this;
+    }
+    neg() {
+        this.x *= -1;
+        this.y *= -1;
+        return this;
+    }
+    static add(v1, v2) {
+        const v2o = v2;
+        if (v2o.x != null && v2o.y != null) {
+            return new Vector(v1.x + v2o.x, v1.y + v2o.y);
+        }
+        else {
+            const s = v2;
+            return new Vector(v1.x + s, v1.y + s);
+        }
+    }
+    static sub(v1, v2) {
+        const v2o = v2;
+        if (v2o.x != null && v2o.y != null) {
+            return new Vector(v1.x - v2o.x, v1.y - v2o.y);
+        }
+        else {
+            const s = v2;
+            return new Vector(v1.x - s, v1.y - s);
+        }
+    }
+    static mul(v1, v2) {
+        const v2o = v2;
+        if (v2o.x != null && v2o.y != null) {
+            return new Vector(v1.x * v2o.x, v1.y * v2o.y);
+        }
+        else {
+            const s = v2;
+            return new Vector(v1.x * s, v1.y * s);
+        }
+    }
+    static div(v1, v2) {
+        const v2o = v2;
+        if (v2o.x != null && v2o.y != null) {
+            return new Vector(v1.x / v2o.x, v1.y / v2o.y);
+        }
+        else {
+            const s = v2;
+            return new Vector(v1.x / s, v1.y / s);
+        }
+    }
+    static random() {
+        return new Vector(Math.random() * 2 - 1, Math.random() * 2 - 1);
+    }
+    static scale(v, s) {
+        return v.clone().scale(s);
+    }
+}
+//# sourceMappingURL=vector.js.map

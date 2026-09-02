@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["ES2017", "DOM"],
+    "outDir": "docs/js",
+    "rootDir": "src",
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "newLine": "lf"
+  },
+  "include": ["src/**/*.ts"]
+}

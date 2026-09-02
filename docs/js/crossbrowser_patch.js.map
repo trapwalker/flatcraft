@@ -1,0 +1,1 @@
+{"version":3,"file":"crossbrowser_patch.js","sourceRoot":"","sources":["../../src/crossbrowser_patch.ts"],"names":[],"mappings":";AAAA,IAAI,CAAC,IAAI,CAAC,IAAI,EAAE,CAAC;IACf,IAAI,CAAC,IAAI,GAAG,UAAU,CAAS;QAC7B,OAAO,IAAI,CAAC,GAAG,CAAC,CAAC,CAAC,GAAG,IAAI,CAAC,GAAG,CAAC,CAAC,CAAC,CAAC;IACnC,CAAC,CAAC;AACJ,CAAC"}

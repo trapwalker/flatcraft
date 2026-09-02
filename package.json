@@ -1,0 +1,14 @@
+{
+  "name": "flatcraft-client",
+  "private": true,
+  "version": "1.0.0",
+  "description": "TypeScript source for the Flatcraft/RoadDogs map client. Compiles to docs/js, served as a static site via GitHub Pages and nginx.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}
