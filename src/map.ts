@@ -46,6 +46,13 @@ const KEYBOARD_ROTATE_SPEED_RAD_PER_SEC = Math.PI / 2;
 // bite out of what's left, asymptotically approaching it rather than slamming into a wall.
 const ZOOM_EDGE_SOFTNESS = 0.5;
 
+// Reference |deltaY| magnitude for one wheel step — see the `wheel` listener below. ~100 is what
+// Chrome/Firefox/Safari report for a single physical mouse-wheel notch on every OS tested during
+// this fix (WheelEvent.DOM_DELTA_PIXEL mode); trackpads report much smaller, continuously-varying
+// magnitudes for the same gesture, which is exactly the point of scaling by it rather than
+// treating every event as one full step.
+const WHEEL_DELTA_PER_STEP = 100;
+
 // ROT-1: radians per pixel of horizontal Shift+drag — chosen so a full 180° turn takes a
 // comfortable ~300px drag, not a tuned/measured value.
 const ROTATE_DRAG_SENSITIVITY = Math.PI / 300;
@@ -227,12 +234,27 @@ export class MapWidget { // todo: setup layers
 
     this.canvas.addEventListener('wheel', (e: WheelEvent) => {
       const dy = -e.deltaY;
+      if (dy === 0) return;
 
       // ZOOM-1: keep whatever's under the cursor fixed in place as the zoom eases in.
       this._zoom_anchor_screen = { x: e.offsetX, y: e.offsetY };
 
-      if (dy > 0) this.zoomIn();
-      else if (dy < 0) this.zoomOut();
+      // Scale the step by |deltaY| instead of always applying one fixed zoomIn()/zoomOut() step
+      // per event (the old behavior): a discrete mouse wheel sends one notch per event (~100 on
+      // most browsers/OSes — WHEEL_DELTA_PER_STEP calibrates to that, so a single notch still
+      // reproduces the old fixed zoom_step_factor step exactly), but a trackpad sends a dense
+      // stream of small, continuously-varying-magnitude events for one physical gesture — and
+      // its momentum/inertia tail routinely trails off into a handful of tiny, SIGN-NOISY events
+      // (e.g. -3, +2, -1, +1) as the gesture visually "stops". Treating every event as a full
+      // step regardless of magnitude turned that noise into full-sized zoomIn()/zoomOut() calls
+      // fired back-to-back in alternating directions — a real, visible zoom shake right as
+      // scrolling settles (reported on the OSM layer at max zoom, but the cause is
+      // device-input-general, not layer-specific). A proportional step makes a magnitude-2 noise
+      // event change the target by a fraction of a percent instead of the full
+      // zoom_step_factor (default 20%), so the noise stays imperceptible while a deliberate
+      // scroll (mouse notch or a real trackpad swipe) still feels the same as before.
+      const multiplier = Math.pow(1 + this.zoom_step_factor, dy / WHEEL_DELTA_PER_STEP);
+      this.zoomBy(multiplier);
 
       e.preventDefault();
     });
