@@ -15,6 +15,11 @@ const DEFAULT_ZOOM_OUT_KEYS = ['-', 'NumpadSubtract'];
 // interacting" timer: pushing further into the limit always just takes a smaller and smaller
 // bite out of what's left, asymptotically approaching it rather than slamming into a wall.
 const ZOOM_EDGE_SOFTNESS = 0.5;
+// ROT-1: radians per pixel of horizontal Shift+drag — chosen so a full 180° turn takes a
+// comfortable ~300px drag, not a tuned/measured value.
+const ROTATE_DRAG_SENSITIVITY = Math.PI / 300;
+// ROT-1: radians per keyboard step (5°) — small enough to nudge, not so small it feels inert.
+const ROTATE_KEY_STEP = Math.PI / 36;
 export class MapWidget {
     constructor(container_id, options) {
         this.fps_stat = new AvgRing(100);
@@ -35,9 +40,12 @@ export class MapWidget {
         this.zoom_factor = 1;
         this.zoom_step = (this.zoom_max - this.zoom_min) / 64;
         this.zoom_target = this.zoom_factor;
+        this.rotation = (options && options.rotation) || 0;
+        this.rotation_target = this.rotation;
         this.camera = new Transform2D();
         this.camera.setTranslation(this.c.x, this.c.y);
         this.camera.setScale(1 / this.zoom_factor);
+        this.camera.rotation = this.rotation;
         this.onResize_callback = () => { this.onResize(); }; // todo: узнать и сделать правильным способом
         this.onRepaint_callback = () => { this.onRepaint(); }; // todo: узнать и сделать правильным способом
         this.container.appendChild(this.canvas);
@@ -52,8 +60,13 @@ export class MapWidget {
         this.onZoom = options && options.onZoom;
         this.zoomInKeys = (options && options.zoomInKeys) || DEFAULT_ZOOM_IN_KEYS;
         this.zoomOutKeys = (options && options.zoomOutKeys) || DEFAULT_ZOOM_OUT_KEYS;
+        this.rotateLeftKeys = (options && options.rotateLeftKeys) || ['['];
+        this.rotateRightKeys = (options && options.rotateRightKeys) || [']'];
+        this.resetRotationKeys = (options && options.resetRotationKeys) || ['Home'];
         this._dx = 0;
         this._dy = 0;
+        this._drotation = 0;
+        this._rotate_drag = false;
         this._zoom_anchor_screen = null;
         let old_x = 0;
         let old_y = 0;
@@ -68,6 +81,12 @@ export class MapWidget {
             e.preventDefault();
         });
         document.addEventListener('keydown', (e) => {
+            // Don't steal keystrokes meant for a text field — e.g. typing into a dat.GUI number box
+            // (this also fixes a pre-existing bug: typing a "-" into one would have triggered
+            // zoomOut()).
+            const target = e.target;
+            if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
+                return;
             if (this.zoomInKeys.includes(e.key) || this.zoomInKeys.includes(e.code)) {
                 // No cursor position to anchor a keyboard-triggered zoom to — zoom around the center.
                 this._zoom_anchor_screen = null;
@@ -79,23 +98,44 @@ export class MapWidget {
                 this.zoomOut();
                 e.preventDefault();
             }
+            else if (this.rotateLeftKeys.includes(e.key) || this.rotateLeftKeys.includes(e.code)) {
+                this.rotateBy(-ROTATE_KEY_STEP);
+                e.preventDefault();
+            }
+            else if (this.rotateRightKeys.includes(e.key) || this.rotateRightKeys.includes(e.code)) {
+                this.rotateBy(ROTATE_KEY_STEP);
+                e.preventDefault();
+            }
+            else if (this.resetRotationKeys.includes(e.key) || this.resetRotationKeys.includes(e.code)) {
+                this.resetRotation();
+                e.preventDefault();
+            }
         });
         this.canvas.addEventListener('mousedown', (e) => {
             this._mouse_move_flag = 1;
             this._mouse_down_flag = 1;
+            // ROT-1: hold Shift while dragging to rotate instead of pan. Decided once at mousedown,
+            // for the whole gesture — doesn't switch mid-drag if Shift is pressed/released partway.
+            this._rotate_drag = e.shiftKey;
             old_x = e.pageX;
             old_y = e.pageY;
         });
         this.canvas.addEventListener('mousemove', (e) => {
             if (this._mouse_move_flag) {
-                this._dx += old_x - e.pageX;
-                this._dy += old_y - e.pageY;
+                if (this._rotate_drag) {
+                    this._drotation += (old_x - e.pageX) * ROTATE_DRAG_SENSITIVITY;
+                }
+                else {
+                    this._dx += old_x - e.pageX;
+                    this._dy += old_y - e.pageY;
+                }
                 old_x = e.pageX;
                 old_y = e.pageY;
             }
         });
         this.canvas.addEventListener('mouseup', () => {
             this._mouse_move_flag = 0;
+            this._rotate_drag = false;
         });
         this.canvas.addEventListener('dblclick', (e) => {
             // AFF-3: was `e.pageX/pageY` against container-relative w/2,h/2 — only correct when the
@@ -108,6 +148,7 @@ export class MapWidget {
         });
         this.canvas.addEventListener('mouseout', () => {
             this._mouse_move_flag = 0;
+            this._rotate_drag = false;
         });
         window.onresize = this.onResize_callback;
         // todo: Попробовать повесить событие на ресайз контейнера а не окна. Убедиться, что не затёрли старый обработчик ресайза.
@@ -158,6 +199,29 @@ export class MapWidget {
             this.c.x += centered.x * drift;
             this.c.y += centered.y * drift;
         }
+        // ROT-1: a drag writes `rotation` directly (immediate feedback, like `c`) and keeps
+        // `rotation_target` in sync so the easing below has nothing left to do once the drag ends.
+        // Keyboard-driven steps (rotateBy/resetRotation) only move `rotation_target`, and ease
+        // towards it the same way (and with the same time constant) zoom_factor eases towards
+        // zoom_target — reused here rather than a second independent tau, for a consistent feel.
+        //
+        // Branches on whether `_drotation` actually accumulated anything this frame, NOT on the
+        // live `_rotate_drag` flag: a fast enough drag (mousedown+move+up all before the next
+        // animation frame — routine for a synthetic/test-driven drag, and not impossible for a real
+        // one) would otherwise have `_rotate_drag` already false by the time this runs, sending the
+        // just-accumulated delta into the easing branch instead of applying it, and silently
+        // dropping it (mirrors why the `_dx`/`_dy` pan drain a few lines below is unconditional too,
+        // not gated on `_mouse_move_flag`).
+        if (this._drotation !== 0) {
+            this.rotation += this._drotation;
+            this.rotation_target = this.rotation;
+            this._drotation = 0;
+        }
+        else {
+            this.rotation += (this.rotation_target - this.rotation) * zoom_alpha;
+            if (Math.abs(this.rotation_target - this.rotation) < 1e-9)
+                this.rotation = this.rotation_target;
+        }
         this._dx /= this.zoom_factor;
         this._dy /= this.zoom_factor;
         // Простой скроллинг
@@ -198,6 +262,7 @@ export class MapWidget {
         this.camera.x = this.c.x;
         this.camera.y = this.c.y;
         this.camera.setScale(1 / this.zoom_factor);
+        this.camera.rotation = this.rotation;
         for (let i = 0; i < layers.length; i++) {
             const layer = layers[i];
             if (layer.visible)
@@ -207,8 +272,11 @@ export class MapWidget {
         window.requestAnimationFrame(this.onRepaint_callback);
     }
     update_url_position() {
-        // update URL
-        const redirect = '#[' + Math.round(this.c.x) + ',' + Math.round(this.c.y) + ']';
+        // ROT-2: third component is rotation in whole degrees (human-readable in the URL bar),
+        // converted back to radians on parse. Old two-component links (src/index.ts's regex still
+        // accepts them) simply come back in with rotation 0.
+        const degrees = Math.round((this.rotation * 180) / Math.PI);
+        const redirect = '#[' + Math.round(this.c.x) + ',' + Math.round(this.c.y) + ',' + degrees + ']';
         history.pushState('', '', redirect);
     }
     locate(x, y) {
@@ -252,6 +320,18 @@ export class MapWidget {
         // feels like it's easing to a stop instead of hitting a wall. Moving the other way (out of
         // the naive-step-would-cross-boundary case) always takes the full step, immediately.
         this.zoom_target += (clamped - this.zoom_target) * ZOOM_EDGE_SOFTNESS;
+    }
+    /** Eases `rotation` by this many radians (positive = clockwise on screen, matching Mat2D.rotation). Unbounded — rotation can wind up past a full turn; see resetRotation(). */
+    rotateBy(deltaRadians) {
+        this.rotation_target += deltaRadians;
+    }
+    /**
+     * Eases back to "north" — but the *nearest* equivalent angle, not literal 0, so a view that's
+     * wound around through several full drag-driven turns snaps back the short way instead of
+     * visibly unspinning through every accumulated turn.
+     */
+    resetRotation() {
+        this.rotation_target = Math.round(this.rotation / (2 * Math.PI)) * (2 * Math.PI);
     }
 }
 export class Layer {
