@@ -9,13 +9,51 @@ import type { TileSource } from './tile_source.js';
 import { Layer, TiledLayer } from './map.js';
 import type { MapWidget } from './map.js';
 
-function makeTileGetter(uriBuilder: (x: number, y: number, z: number) => string): (x: number, y: number, z: number) => Tile {
+// SRC-4: retry policy for a failed tile image load (404, network error, etc.) — was previously
+// unhandled entirely (no img.onerror at all), so a broken tile got cached forever in
+// state:'prepare' with no image and no way to ever recover, even if the failure was transient.
+export interface MakeTileGetterOptions {
+  maxRetries?: number; // attempts beyond the first, e.g. 3 -> 4 tries total before giving up
+  retryBaseDelayMs?: number; // exponential backoff: retryBaseDelayMs * 2^attemptIndex
+}
+
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
+
+function makeTileGetter(
+  uriBuilder: (x: number, y: number, z: number) => string,
+  options?: MakeTileGetterOptions
+): (x: number, y: number, z: number) => Tile {
+  const maxRetries = options?.maxRetries ?? DEFAULT_MAX_RETRIES;
+  const retryBaseDelayMs = options?.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
+
   return function (x: number, y: number, z: number): Tile {
     const path = uriBuilder(x, y, z);
-    const img = new Image();
-    const tile = new Tile(x, y, z, { state: 'prepare', preparing_image: img });
-    img.onload = tile.makeReadyCallback();
-    img.src = path;
+    // The same Tile instance is reused across retries (only `preparing_image`/`state` are
+    // mutated) — TSCache caches whatever Tile object this function returns, keyed by x:y:z, so
+    // a later successful retry "self-heals" that cache entry in place; TSCache itself needs no
+    // retry-awareness at all.
+    const tile = new Tile(x, y, z, { state: 'prepare' });
+
+    const attempt = (attemptIndex: number): void => {
+      const img = new Image();
+      tile.preparing_image = img;
+      img.onload = tile.makeReadyCallback();
+      img.onerror = () => {
+        if (attemptIndex < maxRetries) {
+          // Note: this timer isn't cancelled if the tile falls out of view/gets evicted from
+          // TSCache before it fires (see LOAD-4, not done yet) — harmless (it just finishes
+          // updating an otherwise-unreferenced Tile object), not a growing leak.
+          setTimeout(() => attempt(attemptIndex + 1), retryBaseDelayMs * Math.pow(2, attemptIndex));
+        } else {
+          tile.state = 'error';
+          console.warn(`Tile load failed permanently after ${maxRetries + 1} attempt(s): ${path}`);
+        }
+      };
+      img.src = path;
+    };
+
+    attempt(0);
     return tile;
   };
 }
