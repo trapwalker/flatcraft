@@ -2,6 +2,7 @@ import { Vector } from './vector.js';
 import type { Tile, TileSource } from './tile_source.js';
 import { isHeatableTileSource } from './tile_source.js';
 import { Transform2D } from './transform2d.js';
+import { Mat2D } from './mat2d.js';
 import { AvgRing } from './tools.js';
 
 /// MapWidget /////////////////////////////////////////////////////////////////////////////////////
@@ -370,6 +371,11 @@ export class MapWidget { // todo: setup layers
 export interface LayerOptions {
   name?: string;
   shift?: Vector;
+  // AFF-4: independent of the shared camera zoom/rotation (that's ROT-*'s job) — a per-layer
+  // knob, e.g. for an overlay that should sit at a different apparent scale/angle than the base
+  // map. Both read once at construction into `transform`; see Layer.transform's own comment.
+  scale?: number;
+  rotation?: number;
   onDraw?: (this: Layer, map: MapWidget) => void;
   visible?: boolean;
   color?: string;
@@ -381,6 +387,16 @@ export interface LayerOptions {
 export class Layer {
   name?: string;
   shift: Vector;
+  // AFF-4: this layer's own coordinate system, independent of (not parented to) `map.camera` —
+  // see BACKLOG.md's AFF-4 note on why literally parenting it to camera doesn't compose: camera's
+  // local/world directions are inverted on purpose (world = shared position space, local =
+  // centered screen space, so that screenToWorld/worldToScreen read naturally at the MapWidget
+  // level), which is backwards from what a nested child transform would need. `transform`
+  // instead maps this layer's own local drawing space directly into that same shared *world*
+  // (position) space; MapWidget.camera then takes it from there to the screen, same as any other
+  // world point. Initialized from `shift`/`scale`/`rotation` once at construction — mutate
+  // `transform` directly afterwards (not `shift`) to actually move a layer post-construction.
+  transform: Transform2D;
   onDraw?: (this: Layer, map: MapWidget) => void;
   visible: boolean;
   options: LayerOptions; // todo: разобраться как лучше интегрировать дополнительные опции
@@ -388,6 +404,10 @@ export class Layer {
   constructor(options?: LayerOptions) {
     this.name = options && options.name;
     this.shift = (options && options.shift) || new Vector(0, 0);
+    this.transform = new Transform2D();
+    this.transform.setTranslation(this.shift.x, this.shift.y);
+    if (options && options.scale !== undefined) this.transform.setScale(options.scale);
+    if (options && options.rotation !== undefined) this.transform.rotation = options.rotation;
     this.onDraw = options && options.onDraw;
     this.visible = Boolean(options && (options.visible === undefined ? true : options.visible));
     this.options = options || {};
@@ -421,12 +441,34 @@ export interface TiledLayerOptions extends LayerOptions {
 export interface LevelParams {
   z: number;
   k: number;
-  tile_size: number;
-  c: Vector;
+  tile_size: number; // on-screen size in pixels, at the current zoom
+  world_tile_edge: number; // AFF-4: size of one tile's edge in shared world/position units
   tx: number;
   ty: number;
   dx: number;
   dy: number;
+}
+
+// AFF-4: the combined matrix mapping a tile's *index* (integer ix/iy, one unit = one tile) to
+// actual canvas pixel coordinates — camera pan/zoom, this layer's own shift/scale/rotation, and
+// the tile-index-to-world-units scaling, composed into one Mat2D instead of the old inline
+// `x*tile_size - c.x + w/2` arithmetic. Exported and DOM-free specifically so it's unit-testable
+// (see map.test.ts) against that old formula, independent of any live canvas/browser.
+//
+// `layerTransform` is intentionally not required to be parented to `camera` (see Layer.transform's
+// comment on why that wouldn't compose the way it sounds) — this function reads its `worldMatrix`
+// either way, so it works whether or not a caller has parented it to something.
+export function computeTileGridMatrix(
+  camera: Transform2D,
+  layerTransform: Transform2D,
+  canvasWidth: number,
+  canvasHeight: number,
+  world_tile_edge: number
+): Mat2D {
+  return Mat2D.translation(canvasWidth / 2, canvasHeight / 2)
+    .multiply(camera.worldMatrix.invert())
+    .multiply(layerTransform.worldMatrix)
+    .multiply(Mat2D.scaling(world_tile_edge, world_tile_edge));
 }
 
 export class TiledLayer extends Layer {
@@ -447,12 +489,22 @@ export class TiledLayer extends Layer {
     const z = Math.ceil(Math.log2(zf));
     const k = zf / Math.pow(2, z);
     const tile_size = this.tile_size * k;
-    const c = position.clone().mul(zf); // todo: use "-this.shift"
+    const world_tile_edge = this.tile_size / Math.pow(2, z);
+    // Tile index range: still computed as if this layer's transform were the identity (shift 0,
+    // scale 1) — a layer with a large custom shift/scale may not get perfectly tight tile
+    // coverage from this heuristic (could show a gap at an edge, or fetch a few unneeded tiles),
+    // though tiles that ARE drawn always land in the mathematically correct place regardless
+    // (that part goes through computeTileGridMatrix, which does account for the layer's
+    // transform). Properly accounting for shift/scale/rotation here means projecting the
+    // canvas's four corners through the inverse layer matrix — the same technique ROT-3 needs
+    // for a rotated viewport — not worth doing twice; left for whichever of AFF-4/ROT-3 gets
+    // there first in practice.
+    const c = position.clone().mul(zf);
     return {
       z: z + (this.z_max || 0),
       k,
       tile_size,
-      c,
+      world_tile_edge,
       tx: Math.floor(c.x / tile_size),
       ty: Math.floor(c.y / tile_size),
       dx: Math.ceil(w / tile_size / 2),
@@ -468,21 +520,19 @@ export class TiledLayer extends Layer {
     const level_params = this.getLevelParams(map.c, map.zoom_factor, w, h);
     const z = level_params.z;
     const tile_size = level_params.tile_size;
-    const c = level_params.c;
     const tx = level_params.tx;
     const ty = level_params.ty;
     const dx = level_params.dx;
     const dy = level_params.dy;
 
+    // AFF-4: one matrix for the whole layer this frame, replacing the old per-tile
+    // `x*tile_size - c.x + w/2` arithmetic — see computeTileGridMatrix.
+    const gridMatrix = computeTileGridMatrix(map.camera, this.transform, w, h, level_params.world_tile_edge);
+
     for (let y = ty - dy; y <= ty + dy; y++) {
       for (let x = tx - dx; x <= tx + dx; x++) {
-        this.tileDraw(
-          map,
-          x, y, z,
-          x * tile_size - c.x + w / 2,
-          y * tile_size - c.y + h / 2,
-          tile_size
-        );
+        const topLeft = gridMatrix.transformPoint({ x, y });
+        this.tileDraw(map, x, y, z, topLeft.x, topLeft.y, tile_size, gridMatrix);
       }
     }
 
@@ -496,12 +546,30 @@ export class TiledLayer extends Layer {
     }
   }
 
-  tileDraw(map: MapWidget, ix: number, iy: number, iz: number, x: number, y: number, tsize: number): void {
+  // `gridMatrix`, when given, is used to draw the tile image through the canvas's actual
+  // transform (ctx.setTransform + a unit square at this tile's index) instead of a manually
+  // computed pixel rect — the AFF-4 rewrite. `x`/`y`/`tsize` stay in pixel coordinates regardless
+  // (precomputed by the caller from the same matrix) so `onTileDraw` consumers (drawTileDebug,
+  // map_grid's grid lines — see layers.ts) don't need to change: retrofitting them to draw in the
+  // layer's local (tile-index) units would also mean compensating ctx.font/ctx.lineWidth for the
+  // active scale (both are subject to the CTM same as any other drawing), for no benefit to
+  // debug/grid overlays that have no need to be rotation- or matrix-aware themselves.
+  tileDraw(map: MapWidget, ix: number, iy: number, iz: number, x: number, y: number, tsize: number, gridMatrix?: Mat2D): void {
     let tile: Tile | null | undefined;
     if (this.tile_source) tile = this.tile_source.get(ix, iy, iz);
 
     if (tile && tile.image) {
-      map.ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, x, y, tsize, tsize);
+      const ctx = map.ctx;
+      if (gridMatrix) {
+        ctx.save();
+        ctx.setTransform(gridMatrix.a, gridMatrix.b, gridMatrix.c, gridMatrix.d, gridMatrix.e, gridMatrix.f);
+        ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, ix, iy, 1, 1);
+        ctx.restore();
+      } else {
+        // No matrix given (e.g. a direct call bypassing draw()) — same pixel-rect draw as before
+        // this change.
+        ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, x, y, tsize, tsize);
+      }
     }
 
     if (this.onTileDraw) this.onTileDraw(map, ix, iy, iz, x, y, tsize, tile);
