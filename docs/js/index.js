@@ -13,7 +13,8 @@ let layer_background;
             location: start_position || locations.bel.pos,
             onLocate: function (x, y) {
                 //console.log('onLocate: '+[x, y]);
-                //mapTileSource.heat(x, y, );
+                // Tile preloading is now driven automatically per-frame from what's on screen,
+                // see TiledLayer.draw / LOAD-1 in BACKLOG.md — no manual heat() call needed here.
             },
             layers: ALL_LAYERS,
             zoom_level_min: 5

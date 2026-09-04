@@ -61,7 +61,7 @@ class TSCache extends TileSource {
     r1 = r1 === undefined ? 2048 / 256 / 2 : r1;
     r2 = r2 === undefined ? r1 * 2 : r2;
     zup = zup === undefined ? 1 : zup;
-    zdn = zdn === undefined ? 1 : zup;
+    zdn = zdn === undefined ? 1 : zdn; // was `: zup` — only mattered when zup was passed without zdn
     const heating_state = [x, y, z, r1, r2, zup, zdn].toString();
     if (this._last_heating_state === heating_state) return;
 
@@ -89,6 +89,19 @@ class TSCache extends TileSource {
     }
     return tile;
   }
+}
+
+/// HeatableTileSource ////////////////////////////////////////////////////////////////////////////
+// Narrow, duck-typed contract for the LOAD-1 wiring in TiledLayer.draw (src/map.ts): any
+// TileSource that also exposes `heat()` (currently only TSCache) gets its background
+// preloading driven automatically by the visible tile range, instead of relying on call
+// sites to remember to invoke `heat()` themselves (which, before LOAD-1, nothing did).
+interface HeatableTileSource extends TileSource {
+  heat(x: number, y: number, z: number, r1?: number, r2?: number, zup?: number, zdn?: number): void;
+}
+
+function isHeatableTileSource(source: TileSource): source is HeatableTileSource {
+  return typeof (source as Partial<HeatableTileSource>).heat === 'function';
 }
 
 // todo: метод прогрева прямоугольной зоны слоя

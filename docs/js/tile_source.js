@@ -33,7 +33,7 @@ class TSCache extends TileSource {
         r1 = r1 === undefined ? 2048 / 256 / 2 : r1;
         r2 = r2 === undefined ? r1 * 2 : r2;
         zup = zup === undefined ? 1 : zup;
-        zdn = zdn === undefined ? 1 : zup;
+        zdn = zdn === undefined ? 1 : zdn; // was `: zup` — only mattered when zup was passed without zdn
         const heating_state = [x, y, z, r1, r2, zup, zdn].toString();
         if (this._last_heating_state === heating_state)
             return;
@@ -57,6 +57,9 @@ class TSCache extends TileSource {
         }
         return tile;
     }
+}
+function isHeatableTileSource(source) {
+    return typeof source.heat === 'function';
 }
 class Tile {
     constructor(x, y, z, options) {

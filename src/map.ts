@@ -1,4 +1,10 @@
 /// MapWidget /////////////////////////////////////////////////////////////////////////////////////
+// Recognized against both KeyboardEvent.key (works for the numpad too, as long as NumLock is
+// on — browsers report "+"/"-" for it just like the main row) and KeyboardEvent.code (covers
+// "NumpadAdd"/"NumpadSubtract" specifically, in case a layout ever reports a different `key`).
+const DEFAULT_ZOOM_IN_KEYS = ['+', '=', 'NumpadAdd'];
+const DEFAULT_ZOOM_OUT_KEYS = ['-', 'NumpadSubtract'];
+
 interface MapWidgetOptions {
   scrollType?: string;
   location?: Vector;
@@ -9,6 +15,8 @@ interface MapWidgetOptions {
   zoom_level_max?: number;
   zoom_animation_factor?: number;
   zoom_step_factor?: number;
+  zoomInKeys?: string[];
+  zoomOutKeys?: string[];
 }
 
 class MapWidget { // todo: setup layers
@@ -21,8 +29,6 @@ class MapWidget { // todo: setup layers
   container: HTMLElement;
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
-  canvas2: HTMLCanvasElement;
-  ctx2: CanvasRenderingContext2D;
 
   c: Vector; // todo: use property notation with getter and setter
   is_scrolling_now: boolean;
@@ -44,6 +50,8 @@ class MapWidget { // todo: setup layers
 
   onLocate?: (x: number, y: number) => void;
   onZoom?: (zoom: number) => void;
+  zoomInKeys: string[];
+  zoomOutKeys: string[];
 
   private _mouse_move_flag: number;
   private _mouse_down_flag: number;
@@ -62,8 +70,6 @@ class MapWidget { // todo: setup layers
     this.container = document.getElementById(container_id) as HTMLElement; // todo: throw error if not found
     this.canvas = document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d') as CanvasRenderingContext2D;
-    this.canvas2 = document.createElement('canvas');
-    this.ctx2 = this.canvas.getContext('2d') as CanvasRenderingContext2D;
     // todo: add properties: width, height
     this.c = (options && options.location) || new Vector(0, 0);
     this.is_scrolling_now = false;
@@ -91,6 +97,8 @@ class MapWidget { // todo: setup layers
 
     this.onLocate = options && options.onLocate;
     this.onZoom = options && options.onZoom;
+    this.zoomInKeys = (options && options.zoomInKeys) || DEFAULT_ZOOM_IN_KEYS;
+    this.zoomOutKeys = (options && options.zoomOutKeys) || DEFAULT_ZOOM_OUT_KEYS;
 
     this._dx = 0;
     this._dy = 0;
@@ -101,30 +109,18 @@ class MapWidget { // todo: setup layers
     this.canvas.addEventListener('wheel', (e: WheelEvent) => {
       const dy = -e.deltaY;
 
-      if (dy > 0) {
-        this.zoom_target = this.zoom_target * (1 + this.zoom_step_factor);
-        if (this.zoom_target > this.zoom_max) this.zoom_target = this.zoom_max;
-      } else if (dy < 0) {
-        this.zoom_target = this.zoom_target * (1 - this.zoom_step_factor);
-        if (this.zoom_target < this.zoom_min) this.zoom_target = this.zoom_min;
-      }
+      if (dy > 0) this.zoomIn();
+      else if (dy < 0) this.zoomOut();
 
       e.preventDefault();
     });
 
     document.addEventListener('keydown', (e: KeyboardEvent) => {
-      const key_code = e.keyCode;
-      console.log('Key: ' + key_code);
-
-      if (key_code === 107) {
-        // Plus
-        this.zoom_target = this.zoom_target * (1 + this.zoom_step_factor);
-        if (this.zoom_target > this.zoom_max) this.zoom_target = this.zoom_max;
+      if (this.zoomInKeys.includes(e.key) || this.zoomInKeys.includes(e.code)) {
+        this.zoomIn();
         e.preventDefault();
-      } else if (key_code === 109) {
-        // Minus
-        this.zoom_target = this.zoom_target * (1 - this.zoom_step_factor);
-        if (this.zoom_target < this.zoom_min) this.zoom_target = this.zoom_min;
+      } else if (this.zoomOutKeys.includes(e.key) || this.zoomOutKeys.includes(e.code)) {
+        this.zoomOut();
         e.preventDefault();
       }
     });
@@ -175,8 +171,6 @@ class MapWidget { // todo: setup layers
   onResize(): void {
     this.canvas.height = this.container.clientHeight;
     this.canvas.width = this.container.clientWidth;
-    this.canvas2.height = this.container.clientHeight * 2;
-    this.canvas2.width = this.container.clientWidth * 2;
   }
 
   onRepaint(): void {
@@ -189,7 +183,18 @@ class MapWidget { // todo: setup layers
 
     const layers = this.layers;
 
-    this.zoom_factor += (this.zoom_target - this.zoom_factor) / this.zoom_animation_factor;
+    // Time-based (not frame-based) exponential smoothing towards zoom_target: the old
+    // `zoom_factor += (target - zoom_factor) / zoom_animation_factor` advanced by a fixed
+    // fraction per *frame*, so the same zoom_animation_factor felt slower on a 30fps device
+    // than on a 120fps one. `tau` below is calibrated so the feel at a nominal 60fps frame
+    // matches the old per-frame formula (its per-frame decay constant was 1/zoom_animation_factor,
+    // i.e. a time constant of zoom_animation_factor frames = zoom_animation_factor/60 seconds).
+    // dt is clamped: NaN on the very first frame (this.t not set yet), and capped so a long
+    // stall (e.g. a backgrounded tab) doesn't make zoom_factor jump straight to zoom_target.
+    const zoom_dt = dt && isFinite(dt) && dt > 0 ? Math.min(dt, 0.25) : 1 / 60;
+    const tau = Math.max(this.zoom_animation_factor, 1) / 60;
+    const zoom_alpha = 1 - Math.exp(-zoom_dt / tau);
+    this.zoom_factor += (this.zoom_target - this.zoom_factor) * zoom_alpha;
     if (Math.abs(this.zoom_target - this.zoom_factor) < Math.pow(2, -18)) {
       // todo: calc cutting edge by current zoom
       this.zoom_factor = this.zoom_target;
@@ -259,6 +264,14 @@ class MapWidget { // todo: setup layers
 
   scroll(dx: number, dy: number): void {
     this.locate(this.c.x + dx, this.c.y + dy);
+  }
+
+  zoomIn(): void {
+    this.zoom_target = Math.min(this.zoom_target * (1 + this.zoom_step_factor), this.zoom_max);
+  }
+
+  zoomOut(): void {
+    this.zoom_target = Math.max(this.zoom_target * (1 - this.zoom_step_factor), this.zoom_min);
   }
 }
 
@@ -381,6 +394,15 @@ class TiledLayer extends Layer {
           tile_size
         );
       }
+    }
+
+    // LOAD-1: drive background preloading from whatever's actually on screen, instead of
+    // requiring call sites to remember to invoke tile_source.heat() themselves (nothing did,
+    // previously — see BACKLOG.md). r1 starts right at the visible edge, so the preload ring
+    // is the "next ring out" beyond what tileDraw() above already fetched directly.
+    if (this.tile_source && isHeatableTileSource(this.tile_source)) {
+      const r1 = Math.max(dx, dy);
+      this.tile_source.heat(tx, ty, z, r1, r1 * 2);
     }
   }
 
