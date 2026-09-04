@@ -9,6 +9,31 @@ import { AvgRing } from './tools.js';
 // "NumpadAdd"/"NumpadSubtract" specifically, in case a layout ever reports a different `key`).
 const DEFAULT_ZOOM_IN_KEYS = ['+', '=', 'NumpadAdd'];
 const DEFAULT_ZOOM_OUT_KEYS = ['-', 'NumpadSubtract'];
+// Continuous-hold navigation (WASD/arrows/Z/X/Q/E) — distinct from the discrete, one-shot
+// zoomInKeys/rotateLeftKeys above (+/-, [/]): these are meant to be held down, like a game
+// camera, and re-evaluated every frame in onRepaint rather than acted on once per keydown.
+// Matched against KeyboardEvent.key.toLowerCase() (see the keydown/keyup handlers) — lowercase
+// throughout so letter keys match regardless of Shift/CapsLock state.
+const DEFAULT_PAN_UP_KEYS = ['w', 'arrowup'];
+const DEFAULT_PAN_DOWN_KEYS = ['s', 'arrowdown'];
+const DEFAULT_PAN_LEFT_KEYS = ['a', 'arrowleft'];
+const DEFAULT_PAN_RIGHT_KEYS = ['d', 'arrowright'];
+const DEFAULT_ZOOM_IN_HOLD_KEYS = ['x'];
+const DEFAULT_ZOOM_OUT_HOLD_KEYS = ['z'];
+const DEFAULT_ROTATE_LEFT_HOLD_KEYS = ['q'];
+const DEFAULT_ROTATE_RIGHT_HOLD_KEYS = ['e'];
+// Screen pixels/second, scaled by 1/zoom_factor in use (see onRepaint) so holding a pan key
+// feels consistent with mouse-drag panning — the same screen distance per second regardless of
+// current zoom, rather than crawling at deep zoom or flying at shallow zoom.
+const KEYBOARD_PAN_SPEED_PX_PER_SEC = 600;
+// zoom_target is multiplied/divided by this factor per second held — reuses zoomBy()'s existing
+// soft-edge clamping (ZOOM_EDGE_SOFTNESS), so holding Z/X into zoom_min/zoom_max eases to a stop
+// there too, same as a sustained scroll-wheel would.
+const KEYBOARD_ZOOM_RATE_PER_SEC = 2;
+// Radians/second while Q/E is held — applied directly into `_drotation` (see onRepaint), the
+// same accumulator Shift+drag uses, so it's immediate/un-eased like a drag rather than trailing
+// behind a moving target the way rotateBy()'s discrete steps do.
+const KEYBOARD_ROTATE_SPEED_RAD_PER_SEC = Math.PI / 2;
 // ZOOM-5: fraction of the remaining distance to zoom_min/zoom_max covered by a single step once
 // the naive step would cross the boundary — see MapWidget.zoomBy(). Chosen over full rubber-band
 // overshoot+spring-back (BACKLOG.md's other option) since it needs no "is the user still
@@ -63,10 +88,19 @@ export class MapWidget {
         this.rotateLeftKeys = (options && options.rotateLeftKeys) || ['['];
         this.rotateRightKeys = (options && options.rotateRightKeys) || [']'];
         this.resetRotationKeys = (options && options.resetRotationKeys) || ['Home'];
+        this.panUpKeys = (options && options.panUpKeys) || DEFAULT_PAN_UP_KEYS;
+        this.panDownKeys = (options && options.panDownKeys) || DEFAULT_PAN_DOWN_KEYS;
+        this.panLeftKeys = (options && options.panLeftKeys) || DEFAULT_PAN_LEFT_KEYS;
+        this.panRightKeys = (options && options.panRightKeys) || DEFAULT_PAN_RIGHT_KEYS;
+        this.zoomInHoldKeys = (options && options.zoomInHoldKeys) || DEFAULT_ZOOM_IN_HOLD_KEYS;
+        this.zoomOutHoldKeys = (options && options.zoomOutHoldKeys) || DEFAULT_ZOOM_OUT_HOLD_KEYS;
+        this.rotateLeftHoldKeys = (options && options.rotateLeftHoldKeys) || DEFAULT_ROTATE_LEFT_HOLD_KEYS;
+        this.rotateRightHoldKeys = (options && options.rotateRightHoldKeys) || DEFAULT_ROTATE_RIGHT_HOLD_KEYS;
         this._dx = 0;
         this._dy = 0;
         this._drotation = 0;
         this._rotate_drag = false;
+        this._keysDown = new Set();
         this._zoom_anchor_screen = null;
         let old_x = 0;
         let old_y = 0;
@@ -87,6 +121,11 @@ export class MapWidget {
             const target = e.target;
             if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
                 return;
+            // Continuous-hold navigation (WASD/arrows/Z/X/Q/E): just record that the key is down —
+            // acted on every frame in onRepaint, not here. Held browser key-repeat re-fires keydown
+            // but not keyup, so re-adding an already-present entry is a harmless no-op (Set.add is
+            // idempotent).
+            this._keysDown.add(e.key.toLowerCase());
             if (this.zoomInKeys.includes(e.key) || this.zoomInKeys.includes(e.code)) {
                 // No cursor position to anchor a keyboard-triggered zoom to — zoom around the center.
                 this._zoom_anchor_screen = null;
@@ -110,6 +149,14 @@ export class MapWidget {
                 this.resetRotation();
                 e.preventDefault();
             }
+        });
+        document.addEventListener('keyup', (e) => {
+            this._keysDown.delete(e.key.toLowerCase());
+        });
+        // If focus leaves the window while a key is held (e.g. Alt+Tab), its keyup may never fire —
+        // without this, that key would stay "stuck" down in _keysDown forever.
+        window.addEventListener('blur', () => {
+            this._keysDown.clear();
         });
         this.canvas.addEventListener('mousedown', (e) => {
             this._mouse_move_flag = 1;
@@ -160,24 +207,69 @@ export class MapWidget {
         this.canvas.width = this.container.clientWidth;
     }
     onRepaint() {
-        const t1 = new Date().getTime() / 1000;
+        // `performance.now()` (sub-millisecond resolution, monotonic) instead of the previous
+        // `new Date().getTime()` (whole milliseconds only, and can jump if the system clock is
+        // adjusted): at 120Hz+ refresh rates two consecutive frames landing in the same millisecond
+        // is routine, giving dt=0 and fps=1/0=Infinity, which used to permanently corrupt the fps
+        // display (see AvgRing.add's comment) — sub-millisecond precision makes an exact dt=0 far
+        // less likely, though the explicit finite-check below is the actual, unconditional fix.
+        const t1 = performance.now() / 1000;
         const dt = this.t ? t1 - this.t : NaN;
-        const fps = Math.round(1 / dt);
+        const fps = isFinite(dt) && dt > 0 ? Math.round(1 / dt) : NaN;
         this.fps_stat.add(fps);
         this.dt_stat.add(dt);
         this.t = t1;
         const layers = this.layers;
+        // Clamped, frame-rate-independent delta time shared by every per-frame animation/continuous
+        // input below (zoom/rotation easing, WASD/Z/X/Q/E continuous nav) — NaN on the very first
+        // frame (this.t not set yet), and capped so a long stall (e.g. a backgrounded tab) doesn't
+        // make everything jump/zoom/rotate all at once when it resumes.
+        const frame_dt = dt && isFinite(dt) && dt > 0 ? Math.min(dt, 0.25) : 1 / 60;
+        // WASD/arrows: continuous pan while held, independent of `scrollType` (that governs
+        // mouse-drag inertia/sliding; keyboard nav is always direct, like a game camera). Speed is
+        // screen pixels/second scaled by 1/zoom_factor — see KEYBOARD_PAN_SPEED_PX_PER_SEC.
+        let moveX = 0;
+        let moveY = 0;
+        if (this._isAnyKeyDown(this.panLeftKeys))
+            moveX -= 1;
+        if (this._isAnyKeyDown(this.panRightKeys))
+            moveX += 1;
+        if (this._isAnyKeyDown(this.panUpKeys))
+            moveY -= 1;
+        if (this._isAnyKeyDown(this.panDownKeys))
+            moveY += 1;
+        if (moveX !== 0 || moveY !== 0) {
+            const norm = Math.hypot(moveX, moveY); // don't let diagonal movement (e.g. W+D) be faster
+            const speed = (KEYBOARD_PAN_SPEED_PX_PER_SEC * frame_dt) / this.zoom_factor;
+            this.scroll((moveX / norm) * speed, (moveY / norm) * speed);
+        }
+        // Z/X: continuous zoom while held, via the same zoomBy() the wheel/+/- use — inherits its
+        // soft-edge clamping at zoom_min/zoom_max for free. No cursor position to anchor to, so
+        // (like the discrete +/- keys) this zooms around the center.
+        const zoomOutHeld = this._isAnyKeyDown(this.zoomOutHoldKeys);
+        const zoomInHeld = this._isAnyKeyDown(this.zoomInHoldKeys);
+        if (zoomOutHeld || zoomInHeld) {
+            this._zoom_anchor_screen = null;
+            if (zoomOutHeld)
+                this.zoomBy(Math.pow(1 / KEYBOARD_ZOOM_RATE_PER_SEC, frame_dt));
+            if (zoomInHeld)
+                this.zoomBy(Math.pow(KEYBOARD_ZOOM_RATE_PER_SEC, frame_dt));
+        }
+        // Q/E: continuous rotate while held — added straight into `_drotation`, the same
+        // accumulator Shift+drag uses (drained a little further down), so it's immediate like a
+        // drag rather than trailing an eased target the way rotateBy()'s discrete steps do.
+        if (this._isAnyKeyDown(this.rotateLeftHoldKeys))
+            this._drotation -= KEYBOARD_ROTATE_SPEED_RAD_PER_SEC * frame_dt;
+        if (this._isAnyKeyDown(this.rotateRightHoldKeys))
+            this._drotation += KEYBOARD_ROTATE_SPEED_RAD_PER_SEC * frame_dt;
         // Time-based (not frame-based) exponential smoothing towards zoom_target: the old
         // `zoom_factor += (target - zoom_factor) / zoom_animation_factor` advanced by a fixed
         // fraction per *frame*, so the same zoom_animation_factor felt slower on a 30fps device
         // than on a 120fps one. `tau` below is calibrated so the feel at a nominal 60fps frame
         // matches the old per-frame formula (its per-frame decay constant was 1/zoom_animation_factor,
         // i.e. a time constant of zoom_animation_factor frames = zoom_animation_factor/60 seconds).
-        // dt is clamped: NaN on the very first frame (this.t not set yet), and capped so a long
-        // stall (e.g. a backgrounded tab) doesn't make zoom_factor jump straight to zoom_target.
-        const zoom_dt = dt && isFinite(dt) && dt > 0 ? Math.min(dt, 0.25) : 1 / 60;
         const tau = Math.max(this.zoom_animation_factor, 1) / 60;
-        const zoom_alpha = 1 - Math.exp(-zoom_dt / tau);
+        const zoom_alpha = 1 - Math.exp(-frame_dt / tau);
         const old_zoom_factor = this.zoom_factor;
         this.zoom_factor += (this.zoom_target - this.zoom_factor) * zoom_alpha;
         if (Math.abs(this.zoom_target - this.zoom_factor) < Math.pow(2, -18)) {
@@ -321,6 +413,9 @@ export class MapWidget {
         // the naive-step-would-cross-boundary case) always takes the full step, immediately.
         this.zoom_target += (clamped - this.zoom_target) * ZOOM_EDGE_SOFTNESS;
     }
+    _isAnyKeyDown(keys) {
+        return keys.some((k) => this._keysDown.has(k));
+    }
     /** Eases `rotation` by this many radians (positive = clockwise on screen, matching Mat2D.rotation). Unbounded — rotation can wind up past a full turn; see resetRotation(). */
     rotateBy(deltaRadians) {
         this.rotation_target += deltaRadians;
@@ -372,6 +467,10 @@ export function computeTileGridMatrix(camera, layerTransform, canvasWidth, canva
 export class TiledLayer extends Layer {
     constructor(options) {
         super(options);
+        // Debug-overlay support: how many tile slots this layer's draw() considered this frame
+        // ((2*dx+1)*(2*dy+1)) — not how many actually have an image yet, just the size of the
+        // currently-visible index range. Updated at the top of every draw() call.
+        this.visible_tile_count = 0;
         this.tile_source = options && options.tile_source;
         this.tile_size = (options && options.tile_size) || (this.tile_source && this.tile_source.tile_size) || 0;
         this.onTileDraw = options && options.onTileDraw; // function(ix, iy, x, y, tile)
@@ -414,6 +513,7 @@ export class TiledLayer extends Layer {
         const ty = level_params.ty;
         const dx = level_params.dx;
         const dy = level_params.dy;
+        this.visible_tile_count = (2 * dx + 1) * (2 * dy + 1);
         // AFF-4: one matrix for the whole layer this frame, replacing the old per-tile
         // `x*tile_size - c.x + w/2` arithmetic — see computeTileGridMatrix.
         const gridMatrix = computeTileGridMatrix(map.camera, this.transform, w, h, level_params.world_tile_edge);

@@ -74,6 +74,38 @@ export class TSCache extends TileSource {
     get cache_size() {
         return this.storage.size;
     }
+    // Debug-overlay support: counts by outcome, computed on demand rather than tracked
+    // incrementally (cheap enough at cache_limit's scale, and can't drift out of sync with
+    // eviction the way a running counter could). `.image` is checked directly rather than
+    // `.state === 'ready'` because StaticCanvasTileSource's tiles never set `state` at all (they're
+    // ready the instant they're constructed) — a tile counts as loaded once it has an image,
+    // regardless of what (if anything) set `state`.
+    get loaded_count() {
+        let count = 0;
+        for (const tile of this.storage.values()) {
+            if (tile && tile.image !== undefined)
+                count++;
+        }
+        return count;
+    }
+    get error_count() {
+        let count = 0;
+        for (const tile of this.storage.values()) {
+            if (tile && tile.state === 'error')
+                count++;
+        }
+        return count;
+    }
+    // Cached (Tile object exists) but neither loaded nor errored yet — mid-flight. Does not
+    // include `null` entries (a confirmed "no data here" answer, not a pending one).
+    get loading_count() {
+        let count = 0;
+        for (const tile of this.storage.values()) {
+            if (tile && tile.image === undefined && tile.state !== 'error')
+                count++;
+        }
+        return count;
+    }
     get(x, y, z) {
         const key = x + ':' + y + ':' + z;
         if (this.storage.has(key)) {

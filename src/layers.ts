@@ -67,20 +67,28 @@ function drawDebugInfo(this: Layer, map: MapWidget): void {
   const ctx = map.ctx;
   const w = map.canvas.width;
   const h = map.canvas.height;
+  // The full tile-counts line ("tiles(front): visible=... loading=... loaded=... error=...
+  // cached=...") measures ~580px at this font size — wider than any other debug line — so it's
+  // split across two fillText calls (see below) and needs more left margin than -420 gave it,
+  // which was still clipping "error=... cached=..." off the right edge of a 1280px-wide canvas.
+  const x = w - 520;
   const pos = new Vector(Math.round(map.c.x), Math.round(map.c.y));
   ctx.font = '20px Arial';
   ctx.fillStyle = this.options.color as string;
   ctx.textAlign = 'left';
 
-  ctx.fillText('pos=' + pos, w - 300, h - 20);
-  const fps_range = map.fps_stat.frame_range();
+  ctx.fillText('pos=' + pos, x, h - 20);
 
+  // The fps line used to end with a bare, unlabeled number (the summed cache_size of every
+  // source, tacked on with `// todo: automate cache size counting`) — moved to its own labeled
+  // line below instead of leaving a mystery number next to the frame-rate range.
+  const fps_range = map.fps_stat.frame_range();
   ctx.fillText(
     'fps=' + Math.round(map.fps_stat.avg())
     + ' [' + Math.round(fps_range[0] as number)
     + '..' + Math.round(fps_range[1] as number)
-    + '] ' + (tsMerged.cache_size + tsBack.cache_size + tsFront.cache_size + tsOSM.cache_size), // todo: automate cache size counting
-    w - 300, h - 40
+    + ']',
+    x, h - 40
   );
 
   const dt_range = map.dt_stat.frame_range();
@@ -88,8 +96,29 @@ function drawDebugInfo(this: Layer, map: MapWidget): void {
     'dt=' + Math.round(map.dt_stat.avg() * 1000)
     + ' [' + Math.round((dt_range[0] as number) * 1000)
     + '..' + Math.round((dt_range[1] as number) * 1000)
-    + '] ',
-    w - 300, h - 60
+    + ']',
+    x, h - 60
+  );
+
+  // OSM/front layer specifically (per request — this is the layer that's actually visible by
+  // default): how many tile slots the current viewport covers, vs. how many of those are still
+  // mid-flight, already have an image, or gave up after retrying (SRC-4). `tsFront.cache_size`
+  // (loading+loaded+error, plus any confirmed-empty entries) is the total ever fetched, not just
+  // what's on screen right now — the two numbers differ once you've panned past tiles LOAD-5's
+  // LRU limit hasn't evicted yet.
+  // Two lines, topmost (h-100) first so "tiles(front): ..." reads as the label line above its
+  // continuation, matching the top-to-bottom reading order of the block.
+  const frontLayer = LAYERS.map_tiles_front as TiledLayer;
+  ctx.fillText(
+    'tiles(front): visible=' + frontLayer.visible_tile_count
+    + ' loading=' + tsFront.loading_count,
+    x, h - 100
+  );
+  ctx.fillText(
+    'loaded=' + tsFront.loaded_count
+    + ' error=' + tsFront.error_count
+    + ' cached=' + tsFront.cache_size,
+    x, h - 80
   );
 }
 

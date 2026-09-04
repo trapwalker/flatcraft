@@ -52,7 +52,15 @@ export class AvgRing {
         return [v_min, v_max];
     }
     add(value) {
-        if (!value)
+        // `!value` alone lets Infinity/-Infinity through (only 0/NaN/falsy values are "falsy") —
+        // a single Infinity sample permanently corrupts `sum`/`last_sum` (Infinity + anything finite
+        // stays Infinity forever, and once that sample is evicted from the ring, subtracting it back
+        // out gives Infinity - Infinity = NaN, which then propagates through every future average).
+        // Real trigger seen in practice: fps computed as Math.round(1/dt) where dt came from a
+        // millisecond-resolution clock — two frames landing in the same millisecond (routine on a
+        // 120Hz+ display) gives dt=0, fps=Infinity. See MapWidget.onRepaint for the actual timer fix;
+        // this check is the unconditional backstop regardless of what feeds this ring.
+        if (!value || !isFinite(value))
             return;
         const buffer = this._buffer;
         if (buffer.length >= this.size) {
