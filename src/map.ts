@@ -11,6 +11,13 @@ import { AvgRing } from './tools.js';
 const DEFAULT_ZOOM_IN_KEYS = ['+', '=', 'NumpadAdd'];
 const DEFAULT_ZOOM_OUT_KEYS = ['-', 'NumpadSubtract'];
 
+// ZOOM-5: fraction of the remaining distance to zoom_min/zoom_max covered by a single step once
+// the naive step would cross the boundary — see MapWidget.zoomBy(). Chosen over full rubber-band
+// overshoot+spring-back (BACKLOG.md's other option) since it needs no "is the user still
+// interacting" timer: pushing further into the limit always just takes a smaller and smaller
+// bite out of what's left, asymptotically approaching it rather than slamming into a wall.
+const ZOOM_EDGE_SOFTNESS = 0.5;
+
 export interface MapWidgetOptions {
   scrollType?: string;
   location?: Vector;
@@ -333,11 +340,28 @@ export class MapWidget { // todo: setup layers
   }
 
   zoomIn(): void {
-    this.zoom_target = Math.min(this.zoom_target * (1 + this.zoom_step_factor), this.zoom_max);
+    this.zoomBy(1 + this.zoom_step_factor);
   }
 
   zoomOut(): void {
-    this.zoom_target = Math.max(this.zoom_target * (1 - this.zoom_step_factor), this.zoom_min);
+    this.zoomBy(1 - this.zoom_step_factor);
+  }
+
+  /** multiplier > 1 zooms in, < 1 zooms out. See ZOOM_EDGE_SOFTNESS for the boundary behavior. */
+  private zoomBy(multiplier: number): void {
+    const naive = this.zoom_target * multiplier;
+    const clamped = Math.min(Math.max(naive, this.zoom_min), this.zoom_max);
+    if (Math.abs(clamped - naive) < 1e-12) {
+      // Fully within range (or near enough it doesn't matter) — take the step as asked.
+      this.zoom_target = naive;
+      return;
+    }
+    // The naive step would cross zoom_min/zoom_max: rather than a hard stop (old behavior) or
+    // snapping straight to the boundary, take only part of the remaining distance to it. Each
+    // further push in the same direction takes a smaller bite, so the approach to the limit
+    // feels like it's easing to a stop instead of hitting a wall. Moving the other way (out of
+    // the naive-step-would-cross-boundary case) always takes the full step, immediately.
+    this.zoom_target += (clamped - this.zoom_target) * ZOOM_EDGE_SOFTNESS;
   }
 }
 
