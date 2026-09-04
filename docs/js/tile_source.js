@@ -36,14 +36,33 @@ export class TSCache extends TileSource {
     heat(x, y, z, r1, r2, zup, zdn) {
         r1 = r1 === undefined ? 2048 / 256 / 2 : r1;
         r2 = r2 === undefined ? r1 * 2 : r2;
-        zup = zup === undefined ? 1 : zup;
-        zdn = zdn === undefined ? 1 : zdn; // was `: zup` — only mattered when zup was passed without zdn
+        // Exploring z+1/z-1 at the *same* x/y (what a nonzero zup/zdn does, via `deep` in
+        // tile_tree.ts's heat()) is only meaningful for a z-independent addressing scheme (the xkcd
+        // source: its onGet ignores z entirely, keying purely on x/y). For a standard XYZ/slippy
+        // pyramid, each z level has its own, differently-scaled grid — the same x/y at z-1 is a
+        // *different, unrelated* tile, not a lower-detail version of this one (getting there needs
+        // x/2,y/2, not x,y unchanged). Defaulting to 0 (same-z only) is the behavior that's actually
+        // correct for a generic tile source; a caller that knows its source is z-independent (xkcd)
+        // can still opt in explicitly. Discovered via a real, reproducible bug: with the old default
+        // of 1, LOAD-1's automatic preload requested nonexistent out-of-range tiles from the real OSM
+        // server (e.g. z=17 with an x/y that's only valid at z=18) and got 400s for it.
+        zup = zup === undefined ? 0 : zup;
+        zdn = zdn === undefined ? 0 : zdn; // was `: zup` — only mattered when zup was passed without zdn
         const heating_state = [x, y, z, r1, r2, zup, zdn].toString();
         if (this._last_heating_state === heating_state)
             return;
         this._last_heating_state = heating_state;
+        // `heat`/`ring`/`square` (tile_tree.ts) already give the callback ABSOLUTE tile
+        // coordinates, not offsets from (x,y,z) — square() computes `ix = x - r` etc. itself and
+        // calls back with that, and heat()'s own z-recursion (z+i+1, z-i-1, ...) is likewise
+        // already absolute. Re-adding (x,y,z) here was double-counting every coordinate: this bug
+        // sent LOAD-1's automatic background preload requests for roughly 2x the intended tile
+        // index (e.g. x=315412 instead of 157706) and a z far past any real tile pyramid's depth
+        // (e.g. 18+18=36) — which a real tile server correctly rejects with 400. Went unnoticed
+        // until LOAD-1 wired heat() into the normal render loop: before that, nothing called it at
+        // all (see BACKLOG.md's LOAD-1 note), so this path was simply never exercised.
         const callback = (ix, iy, iz) => {
-            return this.load_queue.push({ x: x + ix, y: y + iy, z: z + iz });
+            return this.load_queue.push({ x: ix, y: iy, z: iz });
         };
         this.load_queue = []; // todo: check garbage collector rules
         heat(callback, x, y, z, r1, r2, zup); // todo: use znd/zup

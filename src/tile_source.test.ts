@@ -90,6 +90,26 @@ describe('TSCache caching (LOAD-5)', () => {
   });
 });
 
+describe('TSCache.heat() (LOAD-1 preload queue)', () => {
+  it('queues tiles at absolute coordinates near (x,y,z) — not doubled', () => {
+    // Real-world symptom this catches: heat(100, 200, 18, ...) used to queue x~300/y~600/z~36
+    // instead of x~100/y~200/z~18 (every coordinate got added to itself once more inside the
+    // callback) -- harmless-looking off by a factor of ~2 that, against a real XYZ tile server,
+    // requests a nonexistent zoom level far past any real pyramid's depth and 400s. See
+    // BACKLOG.md's LOAD-1/SRC-4 notes for how this was actually found (via Playwright against a
+    // real tile server, not by inspection).
+    const { cache } = countingSource(() => null);
+    cache.heat(100, 200, 18, 2, 4);
+
+    expect(cache.load_queue.length).toBeGreaterThan(0);
+    for (const tile of cache.load_queue) {
+      expect(Math.abs(tile.x - 100)).toBeLessThanOrEqual(10);
+      expect(Math.abs(tile.y - 200)).toBeLessThanOrEqual(10);
+      expect(Math.abs(tile.z - 18)).toBeLessThanOrEqual(10);
+    }
+  });
+});
+
 // buildUrl is `protected` — a compile-time-only restriction, erased at runtime — so it's called
 // here via a cast rather than through .get(), specifically to avoid needing `Image`/`document`
 // (not available in vitest's default Node environment; XYZTileSource.get() itself does `new
