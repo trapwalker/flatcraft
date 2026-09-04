@@ -5,6 +5,11 @@ export interface TileSourceOptions {
   name?: string;
   onGet?: (this: TileSource, x: number, y: number, z: number) => Tile | null | undefined;
   tile_size: number;
+  // LOAD-5: only meaningful for TSCache — how many entries `storage` holds before the
+  // least-recently-used one is evicted. No universally "right" number (depends on tile
+  // dimensions and how much the user pans around), so it's per-instance rather than one global
+  // constant; DEFAULT_CACHE_LIMIT below is just a reasonable default, not a tuned value.
+  cache_limit?: number;
 }
 
 export class TileSource {
@@ -35,17 +40,25 @@ interface QueuedTile {
   z: number;
 }
 
+// LOAD-5: `storage` used to grow without limit for the lifetime of the page (flagged as a known
+// gap in tile_tree.ts's old comments and in BACKLOG.md's audit). Generous enough that normal
+// panning/zooming rarely evicts anything actually still in view, but bounded.
+const DEFAULT_CACHE_LIMIT = 2000;
+
 export class TSCache extends TileSource {
-  cache_size: number;
-  storage: Record<string, Tile | null | undefined>;
+  cache_limit: number;
+  // A Map (not a plain object) specifically for its iteration-order-is-insertion-order
+  // guarantee: re-inserting a key (delete + set) on every read moves it to the end, so the
+  // first key is always the least-recently-used one — an LRU cache with no extra bookkeeping.
+  storage: Map<string, Tile | null>;
   load_queue: QueuedTile[];
   private _last_heating_state: string | null;
   private onBackgroundHeat: () => void;
 
   constructor(options: TileSourceOptions) {
     super(options);
-    this.cache_size = 0;
-    this.storage = {};
+    this.cache_limit = options.cache_limit || DEFAULT_CACHE_LIMIT;
+    this.storage = new Map();
     this.load_queue = [];
     this._last_heating_state = null;
 
@@ -79,15 +92,36 @@ export class TSCache extends TileSource {
     // todo: autorun background heating
   }
 
+  // Was a manually incremented-only counter; became a getter over `storage.size` once eviction
+  // existed, since a counter that never decrements would drift from reality as entries are
+  // evicted below.
+  get cache_size(): number {
+    return this.storage.size;
+  }
+
   get(x: number, y: number, z: number): Tile | null | undefined {
     const key = x + ':' + y + ':' + z;
-    let tile = this.storage[key];
-    if (tile !== undefined) return tile;
 
-    tile = super.get(x, y, z);
+    if (this.storage.has(key)) {
+      const tile = this.storage.get(key) as Tile | null;
+      // Refresh recency: delete + re-set moves this key to the end of the Map's iteration
+      // order, i.e. marks it most-recently-used.
+      this.storage.delete(key);
+      this.storage.set(key, tile);
+      return tile;
+    }
+
+    const tile = super.get(x, y, z);
     if (tile !== undefined) {
-      this.storage[key] = tile;
-      this.cache_size += 1;
+      // Only Tile | null gets cached — `undefined` (no onGet configured, or onGet declining to
+      // answer) is deliberately never cached, so every call keeps trying instead of getting
+      // stuck on a transient "no answer".
+      this.storage.set(key, tile);
+      while (this.storage.size > this.cache_limit) {
+        const oldestKey = this.storage.keys().next().value;
+        if (oldestKey === undefined) break; // storage is empty — shouldn't happen here, but be safe
+        this.storage.delete(oldestKey);
+      }
     }
     return tile;
   }

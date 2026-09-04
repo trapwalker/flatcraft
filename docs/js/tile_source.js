@@ -13,11 +13,15 @@ export class TileSource {
         return undefined;
     }
 }
+// LOAD-5: `storage` used to grow without limit for the lifetime of the page (flagged as a known
+// gap in tile_tree.ts's old comments and in BACKLOG.md's audit). Generous enough that normal
+// panning/zooming rarely evicts anything actually still in view, but bounded.
+const DEFAULT_CACHE_LIMIT = 2000;
 export class TSCache extends TileSource {
     constructor(options) {
         super(options);
-        this.cache_size = 0;
-        this.storage = {};
+        this.cache_limit = options.cache_limit || DEFAULT_CACHE_LIMIT;
+        this.storage = new Map();
         this.load_queue = [];
         this._last_heating_state = null;
         this.onBackgroundHeat = () => {
@@ -45,15 +49,34 @@ export class TSCache extends TileSource {
         heat(callback, x, y, z, r1, r2, zup); // todo: use znd/zup
         // todo: autorun background heating
     }
+    // Was a manually incremented-only counter; became a getter over `storage.size` once eviction
+    // existed, since a counter that never decrements would drift from reality as entries are
+    // evicted below.
+    get cache_size() {
+        return this.storage.size;
+    }
     get(x, y, z) {
         const key = x + ':' + y + ':' + z;
-        let tile = this.storage[key];
-        if (tile !== undefined)
+        if (this.storage.has(key)) {
+            const tile = this.storage.get(key);
+            // Refresh recency: delete + re-set moves this key to the end of the Map's iteration
+            // order, i.e. marks it most-recently-used.
+            this.storage.delete(key);
+            this.storage.set(key, tile);
             return tile;
-        tile = super.get(x, y, z);
+        }
+        const tile = super.get(x, y, z);
         if (tile !== undefined) {
-            this.storage[key] = tile;
-            this.cache_size += 1;
+            // Only Tile | null gets cached — `undefined` (no onGet configured, or onGet declining to
+            // answer) is deliberately never cached, so every call keeps trying instead of getting
+            // stuck on a transient "no answer".
+            this.storage.set(key, tile);
+            while (this.storage.size > this.cache_limit) {
+                const oldestKey = this.storage.keys().next().value;
+                if (oldestKey === undefined)
+                    break; // storage is empty — shouldn't happen here, but be safe
+                this.storage.delete(oldestKey);
+            }
         }
         return tile;
     }
