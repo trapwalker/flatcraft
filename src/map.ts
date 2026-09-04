@@ -73,6 +73,11 @@ export class MapWidget { // todo: setup layers
   private _dx: number; // todo: rename
   private _dy: number;
   private t?: number;
+  // ZOOM-1: screen point (canvas pixel coords) that a zoom gesture should keep fixed in place
+  // while zoom_factor eases towards zoom_target across several frames — not just once at the
+  // end. Set by the wheel handler to the cursor position; cleared (-> zoom around center) by
+  // the keyboard shortcuts, which have no cursor position to anchor to.
+  private _zoom_anchor_screen: XY | null;
 
   constructor(container_id: string, options?: MapWidgetOptions) {
     this.fps_stat = new AvgRing(100);
@@ -120,12 +125,16 @@ export class MapWidget { // todo: setup layers
 
     this._dx = 0;
     this._dy = 0;
+    this._zoom_anchor_screen = null;
 
     let old_x = 0;
     let old_y = 0;
 
     this.canvas.addEventListener('wheel', (e: WheelEvent) => {
       const dy = -e.deltaY;
+
+      // ZOOM-1: keep whatever's under the cursor fixed in place as the zoom eases in.
+      this._zoom_anchor_screen = { x: e.offsetX, y: e.offsetY };
 
       if (dy > 0) this.zoomIn();
       else if (dy < 0) this.zoomOut();
@@ -135,9 +144,12 @@ export class MapWidget { // todo: setup layers
 
     document.addEventListener('keydown', (e: KeyboardEvent) => {
       if (this.zoomInKeys.includes(e.key) || this.zoomInKeys.includes(e.code)) {
+        // No cursor position to anchor a keyboard-triggered zoom to — zoom around the center.
+        this._zoom_anchor_screen = null;
         this.zoomIn();
         e.preventDefault();
       } else if (this.zoomOutKeys.includes(e.key) || this.zoomOutKeys.includes(e.code)) {
+        this._zoom_anchor_screen = null;
         this.zoomOut();
         e.preventDefault();
       }
@@ -212,10 +224,27 @@ export class MapWidget { // todo: setup layers
     const zoom_dt = dt && isFinite(dt) && dt > 0 ? Math.min(dt, 0.25) : 1 / 60;
     const tau = Math.max(this.zoom_animation_factor, 1) / 60;
     const zoom_alpha = 1 - Math.exp(-zoom_dt / tau);
+    const old_zoom_factor = this.zoom_factor;
     this.zoom_factor += (this.zoom_target - this.zoom_factor) * zoom_alpha;
     if (Math.abs(this.zoom_target - this.zoom_factor) < Math.pow(2, -18)) {
       // todo: calc cutting edge by current zoom
       this.zoom_factor = this.zoom_target;
+    }
+
+    // ZOOM-1: re-anchor `c` so that whatever world point was under `_zoom_anchor_screen` before
+    // this frame's zoom step is still under it after — applied every frame the zoom is easing,
+    // not just once at the end, so the anchor doesn't drift mid-animation. Derived directly from
+    // screenToWorld's formula (world = centered/zoom + c): the drift introduced by changing zoom
+    // alone, at a fixed `c`, is `centered * (1/old_zoom - 1/new_zoom)` — subtracting it out of
+    // `c` is what keeps `centered` (and so the anchor) pointing at the same world position.
+    if (this._zoom_anchor_screen && this.zoom_factor !== old_zoom_factor) {
+      const centered = {
+        x: this._zoom_anchor_screen.x - this.canvas.width / 2,
+        y: this._zoom_anchor_screen.y - this.canvas.height / 2
+      };
+      const drift = 1 / old_zoom_factor - 1 / this.zoom_factor;
+      this.c.x += centered.x * drift;
+      this.c.y += centered.y * drift;
     }
 
     this._dx /= this.zoom_factor;
