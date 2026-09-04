@@ -81,6 +81,78 @@ export class TSCache extends TileSource {
         return tile;
     }
 }
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
+export class XYZTileSource extends TSCache {
+    constructor(options) {
+        var _a, _b;
+        super(options);
+        this.urlTemplate = options.urlTemplate;
+        this.maxRetries = (_a = options.maxRetries) !== null && _a !== void 0 ? _a : DEFAULT_MAX_RETRIES;
+        this.retryBaseDelayMs = (_b = options.retryBaseDelayMs) !== null && _b !== void 0 ? _b : DEFAULT_RETRY_BASE_DELAY_MS;
+        this.onGet = (x, y, z) => this.fetchTile(x, y, z);
+    }
+    /** Builds the request URL for a tile. Override to remap coordinates first — see TMSTileSource. */
+    buildUrl(x, y, z) {
+        return this.urlTemplate(x, y, z);
+    }
+    fetchTile(x, y, z) {
+        // The same Tile instance is reused across retries (only `preparing_image`/`state` are
+        // mutated) — TSCache caches whatever this returns, keyed by x:y:z, so a later successful
+        // retry "self-heals" that cache entry in place; TSCache itself needs no retry-awareness.
+        const tile = new Tile(x, y, z, { state: 'prepare' });
+        const attempt = (attemptIndex) => {
+            const img = new Image();
+            tile.preparing_image = img;
+            img.onload = tile.makeReadyCallback();
+            img.onerror = () => {
+                if (attemptIndex < this.maxRetries) {
+                    // Not cancelled if the tile falls out of view/gets evicted before it fires (see
+                    // LOAD-4, not done yet) — harmless (finishes updating an otherwise-unreferenced Tile),
+                    // not a growing leak.
+                    setTimeout(() => attempt(attemptIndex + 1), this.retryBaseDelayMs * Math.pow(2, attemptIndex));
+                }
+                else {
+                    tile.state = 'error';
+                    console.warn(`Tile load failed permanently after ${this.maxRetries + 1} attempt(s): ${this.buildUrl(x, y, z)}`);
+                }
+            };
+            img.src = this.buildUrl(x, y, z);
+        };
+        attempt(0);
+        return tile;
+    }
+}
+/// TMSTileSource ///////////////////////////////////////////////////////////////////////////////////
+// TMS flips the Y axis relative to the (far more common) XYZ/Slippy convention — origin at the
+// bottom-left instead of the top-left. `x`/`y`/`z` as seen by callers (TiledLayer, the cache key,
+// heat()'s addressing) stay XYZ throughout; only the request URL gets the flipped Y, computed
+// fresh per call since it depends on `z`.
+export class TMSTileSource extends XYZTileSource {
+    buildUrl(x, y, z) {
+        const tmsY = Math.pow(2, z) - 1 - y;
+        return super.buildUrl(x, tmsY, z);
+    }
+}
+export class StaticCanvasTileSource extends TSCache {
+    constructor(options) {
+        super(options);
+        this.drawTileFn = options.drawTile;
+        this.onGet = (x, y, z) => {
+            let canvas;
+            const getCtx = () => {
+                if (!canvas) {
+                    canvas = document.createElement('canvas');
+                    canvas.width = this.tile_size;
+                    canvas.height = this.tile_size;
+                }
+                return canvas.getContext('2d');
+            };
+            const hasData = this.drawTileFn(getCtx, x, y, z);
+            return hasData && canvas ? new Tile(x, y, z, { image: canvas }) : null;
+        };
+    }
+}
 export function isHeatableTileSource(source) {
     return typeof source.heat === 'function';
 }

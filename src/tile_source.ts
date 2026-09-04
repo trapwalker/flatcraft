@@ -127,6 +127,122 @@ export class TSCache extends TileSource {
   }
 }
 
+/// XYZTileSource //////////////////////////////////////////////////////////////////////////////////
+// SRC-2: a reusable base for the common "build a URL from x/y/z, load it as an <img>" pattern —
+// previously duplicated per source as ad hoc closures in src/layers.ts (makeTileGetter). Includes
+// SRC-4's retry-with-backoff, generalized here rather than left a layers.ts-local helper, since
+// it's genuinely core tile-loading infrastructure, not demo-specific.
+export interface XYZTileSourceOptions extends TileSourceOptions {
+  urlTemplate: (x: number, y: number, z: number) => string;
+  maxRetries?: number; // attempts beyond the first, e.g. 3 -> 4 tries total before giving up
+  retryBaseDelayMs?: number; // exponential backoff: retryBaseDelayMs * 2^attemptIndex
+}
+
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
+
+export class XYZTileSource extends TSCache {
+  urlTemplate: (x: number, y: number, z: number) => string;
+  maxRetries: number;
+  retryBaseDelayMs: number;
+
+  constructor(options: XYZTileSourceOptions) {
+    super(options);
+    this.urlTemplate = options.urlTemplate;
+    this.maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+    this.retryBaseDelayMs = options.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
+    this.onGet = (x, y, z) => this.fetchTile(x, y, z);
+  }
+
+  /** Builds the request URL for a tile. Override to remap coordinates first — see TMSTileSource. */
+  protected buildUrl(x: number, y: number, z: number): string {
+    return this.urlTemplate(x, y, z);
+  }
+
+  private fetchTile(x: number, y: number, z: number): Tile {
+    // The same Tile instance is reused across retries (only `preparing_image`/`state` are
+    // mutated) — TSCache caches whatever this returns, keyed by x:y:z, so a later successful
+    // retry "self-heals" that cache entry in place; TSCache itself needs no retry-awareness.
+    const tile = new Tile(x, y, z, { state: 'prepare' });
+
+    const attempt = (attemptIndex: number): void => {
+      const img = new Image();
+      tile.preparing_image = img;
+      img.onload = tile.makeReadyCallback();
+      img.onerror = () => {
+        if (attemptIndex < this.maxRetries) {
+          // Not cancelled if the tile falls out of view/gets evicted before it fires (see
+          // LOAD-4, not done yet) — harmless (finishes updating an otherwise-unreferenced Tile),
+          // not a growing leak.
+          setTimeout(() => attempt(attemptIndex + 1), this.retryBaseDelayMs * Math.pow(2, attemptIndex));
+        } else {
+          tile.state = 'error';
+          console.warn(`Tile load failed permanently after ${this.maxRetries + 1} attempt(s): ${this.buildUrl(x, y, z)}`);
+        }
+      };
+      img.src = this.buildUrl(x, y, z);
+    };
+
+    attempt(0);
+    return tile;
+  }
+}
+
+/// TMSTileSource ///////////////////////////////////////////////////////////////////////////////////
+// TMS flips the Y axis relative to the (far more common) XYZ/Slippy convention — origin at the
+// bottom-left instead of the top-left. `x`/`y`/`z` as seen by callers (TiledLayer, the cache key,
+// heat()'s addressing) stay XYZ throughout; only the request URL gets the flipped Y, computed
+// fresh per call since it depends on `z`.
+export class TMSTileSource extends XYZTileSource {
+  protected buildUrl(x: number, y: number, z: number): string {
+    const tmsY = Math.pow(2, z) - 1 - y;
+    return super.buildUrl(x, tmsY, z);
+  }
+}
+
+/// StaticCanvasTileSource /////////////////////////////////////////////////////////////////////////
+// SRC-2: a reusable base for sources that synthesize a tile's image on the fly (by drawing into a
+// canvas) rather than fetching one — generalizes the pattern src/layers.ts's xkcd source used to
+// hand-roll directly against TSCache. Synchronous by nature (drawing is synchronous), so no
+// retry/error-state machinery is needed here the way XYZTileSource needs it for network loads.
+export interface StaticCanvasTileSourceOptions extends TileSourceOptions {
+  /**
+   * Called for every cache miss. `getCtx()` lazily creates a tile_size x tile_size canvas on
+   * first call within this invocation — call it only once actual data is confirmed, so a tile
+   * with no data (common: most of a sparse/small dataset's index space is empty) costs nothing
+   * beyond the lookup itself. Return false without calling `getCtx()` at all for "no data here".
+   *
+   * (An earlier version of this class always allocated the canvas up front, before drawTile got
+   * a chance to say "no data" — a real regression this API is designed to make hard to repeat:
+   * a sparse source at a zoom/pan where most lookups miss meant allocating and discarding a full
+   * tile_size x tile_size canvas per miss, memory pressure real enough to visibly break canvas
+   * rendering in a constrained environment. Caught via Playwright, not by inspection.)
+   */
+  drawTile: (getCtx: () => CanvasRenderingContext2D, x: number, y: number, z: number) => boolean;
+}
+
+export class StaticCanvasTileSource extends TSCache {
+  drawTileFn: StaticCanvasTileSourceOptions['drawTile'];
+
+  constructor(options: StaticCanvasTileSourceOptions) {
+    super(options);
+    this.drawTileFn = options.drawTile;
+    this.onGet = (x, y, z) => {
+      let canvas: HTMLCanvasElement | undefined;
+      const getCtx = (): CanvasRenderingContext2D => {
+        if (!canvas) {
+          canvas = document.createElement('canvas');
+          canvas.width = this.tile_size;
+          canvas.height = this.tile_size;
+        }
+        return canvas.getContext('2d') as CanvasRenderingContext2D;
+      };
+      const hasData = this.drawTileFn(getCtx, x, y, z);
+      return hasData && canvas ? new Tile(x, y, z, { image: canvas }) : null;
+    };
+  }
+}
+
 /// HeatableTileSource ////////////////////////////////////////////////////////////////////////////
 // Narrow, duck-typed contract for the LOAD-1 wiring in TiledLayer.draw (src/map.ts): any
 // TileSource that also exposes `heat()` (currently only TSCache) gets its background

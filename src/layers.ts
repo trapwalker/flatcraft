@@ -4,92 +4,39 @@ import { Vector } from './vector.js';
 import { BASE_COLOR, DEBUG } from './defines.js';
 import { Iter } from './tools.js';
 import { load_tree, leafFunction } from './tile_tree.js';
-import { Tile, TSCache } from './tile_source.js';
-import type { TileSource } from './tile_source.js';
+import { XYZTileSource, StaticCanvasTileSource } from './tile_source.js';
 import { Layer, TiledLayer } from './map.js';
 import type { MapWidget } from './map.js';
 
-// SRC-4: retry policy for a failed tile image load (404, network error, etc.) — was previously
-// unhandled entirely (no img.onerror at all), so a broken tile got cached forever in
-// state:'prepare' with no image and no way to ever recover, even if the failure was transient.
-export interface MakeTileGetterOptions {
-  maxRetries?: number; // attempts beyond the first, e.g. 3 -> 4 tries total before giving up
-  retryBaseDelayMs?: number; // exponential backoff: retryBaseDelayMs * 2^attemptIndex
-}
-
-const DEFAULT_MAX_RETRIES = 3;
-const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
-
-function makeTileGetter(
-  uriBuilder: (x: number, y: number, z: number) => string,
-  options?: MakeTileGetterOptions
-): (x: number, y: number, z: number) => Tile {
-  const maxRetries = options?.maxRetries ?? DEFAULT_MAX_RETRIES;
-  const retryBaseDelayMs = options?.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
-
-  return function (x: number, y: number, z: number): Tile {
-    const path = uriBuilder(x, y, z);
-    // The same Tile instance is reused across retries (only `preparing_image`/`state` are
-    // mutated) — TSCache caches whatever Tile object this function returns, keyed by x:y:z, so
-    // a later successful retry "self-heals" that cache entry in place; TSCache itself needs no
-    // retry-awareness at all.
-    const tile = new Tile(x, y, z, { state: 'prepare' });
-
-    const attempt = (attemptIndex: number): void => {
-      const img = new Image();
-      tile.preparing_image = img;
-      img.onload = tile.makeReadyCallback();
-      img.onerror = () => {
-        if (attemptIndex < maxRetries) {
-          // Note: this timer isn't cancelled if the tile falls out of view/gets evicted from
-          // TSCache before it fires (see LOAD-4, not done yet) — harmless (it just finishes
-          // updating an otherwise-unreferenced Tile object), not a growing leak.
-          setTimeout(() => attempt(attemptIndex + 1), retryBaseDelayMs * Math.pow(2, attemptIndex));
-        } else {
-          tile.state = 'error';
-          console.warn(`Tile load failed permanently after ${maxRetries + 1} attempt(s): ${path}`);
-        }
-      };
-      img.src = path;
-    };
-
-    attempt(0);
-    return tile;
-  };
-}
-
-//mapTileSource = new TSCache({
-//  tile_size: 256,
-//  onGet: makeTileGetter(function(x, y, z) {return `http://roaddogs.ru/map/merged/${z}/${x}/${y}.jpg`;})
-//});
+// SRC-2: retry-with-backoff (SRC-4) and the URL-template pattern now live in XYZTileSource
+// (src/tile_source.ts) — generalized out of what used to be a layers.ts-local `makeTileGetter`,
+// since neither is specific to this demo's particular sources.
 
 const TILE_EXT = '.png';
 
-const tsMerged = new TSCache({
+const tsMerged = new XYZTileSource({
   tile_size: 256,
-  onGet: makeTileGetter((x, y, z) => `http://roaddogs.ru/map/merged/${z}/${x}/${y}${TILE_EXT}`)
+  urlTemplate: (x, y, z) => `http://roaddogs.ru/map/merged/${z}/${x}/${y}${TILE_EXT}`
 });
 
-const tsBack = new TSCache({
+const tsBack = new XYZTileSource({
   tile_size: 256,
-  onGet: makeTileGetter((x, y, z) => `http://roaddogs.ru/map/back/${z}/${x}/${y}${TILE_EXT}`)
-  //  onGet: makeTileGetter(function(x, y, z) {return `http://roaddogs.ru/map/back/${z}/${x}/${y}${TILE_EXT}`;})
+  urlTemplate: (x, y, z) => `http://roaddogs.ru/map/back/${z}/${x}/${y}${TILE_EXT}`
 });
 
-const tsFront = new TSCache({
+const tsFront = new XYZTileSource({
   tile_size: 256,
-  //  onGet: makeTileGetter(function(x, y, z) {return `http://roaddogs.ru/map/front/${z}/${x}/${y}${TILE_EXT}`;})
-  onGet: makeTileGetter((x, y, z) => `https://a.tile.openstreetmap.org/${z}/${x}/${y}${TILE_EXT}`)
+  urlTemplate: (x, y, z) => `https://a.tile.openstreetmap.org/${z}/${x}/${y}${TILE_EXT}`
 });
 
-const tsOSM = new TSCache({
+const tsOSM = new XYZTileSource({
   tile_size: 256,
-  onGet: makeTileGetter((x, y, z) => `https://a.tile.openstreetmap.org/${z}/${x}/${y}${TILE_EXT}`)
+  urlTemplate: (x, y, z) => `https://a.tile.openstreetmap.org/${z}/${x}/${y}${TILE_EXT}`
 });
 
-const tsStrava = new TSCache({
+const tsStrava = new XYZTileSource({
   tile_size: 512,
-  onGet: makeTileGetter((x, y, z) => `https://heatmap-external-a.strava.com/tiles/all/hot/${z}/${x}/${y}.png`)
+  urlTemplate: (x, y, z) => `https://heatmap-external-a.strava.com/tiles/all/hot/${z}/${x}/${y}.png`
 });
 
 function drawTileDebug(
@@ -158,20 +105,16 @@ export const LAYERS: Record<string, Layer> = {
 
   xkcd_tiles: new TiledLayer({
     name: 'XKCD tiles',
-    tile_source: new TSCache({
+    tile_source: new StaticCanvasTileSource({
       tile_size: 2048,
-      onGet: function (this: TileSource, x: number, y: number, z: number): Tile | null {
+      drawTile: (getCtx, x, y, z) => {
         const key = x + ':' + (64 - y);
         const data = TILES_AS_TREE[key];
-        if (data === undefined) return null;
+        if (data === undefined) return false; // no canvas allocated for the (common) miss case
 
-        const canvas = document.createElement('canvas');
-        canvas.width = this.tile_size;
-        canvas.height = this.tile_size;
-        const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
         console.log('build tile: ' + [x, y, z] + ' data: ' + data.length);
-        load_tree(Iter(data), leafFunction, ctx, 2048); // строит изображение тайла через leafFunction
-        return new Tile(x, y, z, { image: canvas });
+        load_tree(Iter(data), leafFunction, getCtx(), 2048); // строит изображение тайла через leafFunction
+        return true;
       }
     }),
     visible: false,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Tile, TSCache } from './tile_source.js';
+import { Tile, TSCache, XYZTileSource, TMSTileSource } from './tile_source.js';
 
 function countingSource(onGet: (x: number, y: number, z: number) => Tile | null | undefined) {
   const calls: Array<[number, number, number]> = [];
@@ -87,5 +87,42 @@ describe('TSCache caching (LOAD-5)', () => {
     cache.get(1, 0, 0);
     cache.get(2, 0, 0);
     expect(calls).toEqual([[2, 0, 0]]); // only the evicted one needed re-fetching
+  });
+});
+
+// buildUrl is `protected` — a compile-time-only restriction, erased at runtime — so it's called
+// here via a cast rather than through .get(), specifically to avoid needing `Image`/`document`
+// (not available in vitest's default Node environment; XYZTileSource.get() itself does `new
+// Image()`, so it isn't unit-tested directly here — its network-loading path is covered by the
+// SRC-4/AFF-3 Playwright checks instead, against this sandbox's real tile-server responses).
+describe('XYZTileSource / TMSTileSource (SRC-2) URL building', () => {
+  it('XYZTileSource.buildUrl passes x/y/z straight through to the template', () => {
+    const source = new XYZTileSource({
+      tile_size: 256,
+      urlTemplate: (x, y, z) => `https://example.test/${z}/${x}/${y}.png`
+    });
+    expect((source as unknown as { buildUrl: (x: number, y: number, z: number) => string }).buildUrl(5, 10, 3))
+      .toBe('https://example.test/3/5/10.png');
+  });
+
+  it('TMSTileSource flips Y (origin bottom-left) before calling the template, keeping x/z as given', () => {
+    const source = new TMSTileSource({
+      tile_size: 256,
+      urlTemplate: (x, y, z) => `https://example.test/${z}/${x}/${y}.png`
+    });
+    const buildUrl = (source as unknown as { buildUrl: (x: number, y: number, z: number) => string }).buildUrl.bind(source);
+
+    // z=3 -> 8x8 grid (0..7). XYZ y=0 (top row) is TMS y=7 (top-left origin vs. bottom-left).
+    expect(buildUrl(5, 0, 3)).toBe('https://example.test/3/5/7.png');
+    // The bottom row in XYZ (y=7) is TMS row 0.
+    expect(buildUrl(5, 7, 3)).toBe('https://example.test/3/5/0.png');
+    // Round trip: flipping twice (at two different z) recovers the original y at that z.
+    expect(buildUrl(2, 2, 2)).toBe('https://example.test/2/2/1.png'); // z=2 -> 4x4 grid, flip(2) = 4-1-2 = 1
+  });
+
+  it('XYZTileSource/TMSTileSource are still TSCache underneath — caching and heat() work the same', () => {
+    const source = new XYZTileSource({ tile_size: 256, urlTemplate: () => 'https://example.test/x.png' });
+    expect(source).toBeInstanceOf(TSCache);
+    expect(typeof source.heat).toBe('function');
   });
 });
