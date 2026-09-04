@@ -1,6 +1,8 @@
-type TreeCallback = (ctx: CanvasRenderingContext2D, node: string, w: number, x: number, y: number) => void;
+import { NC, COLOR_MAP } from './defines.js';
 
-function load_tree(
+export type TreeCallback = (ctx: CanvasRenderingContext2D, node: string, w: number, x: number, y: number) => void;
+
+export function load_tree(
   stream: () => string,
   callback: TreeCallback,
   ctx: CanvasRenderingContext2D,
@@ -23,7 +25,7 @@ function load_tree(
   }
 }
 
-function leafFunction(ctx: CanvasRenderingContext2D, color: string, w: number, x: number, y: number): void {
+export function leafFunction(ctx: CanvasRenderingContext2D, color: string, w: number, x: number, y: number): void {
   const c = COLOR_MAP[color];
   if (c === undefined) {
     console.warn('Unknown color: "' + color + '"');
@@ -33,9 +35,9 @@ function leafFunction(ctx: CanvasRenderingContext2D, color: string, w: number, x
   }
 }
 
-type SquareCallback = (x: number, y: number, z: number) => number;
+export type SquareCallback = (x: number, y: number, z: number) => number;
 
-function square(callback: SquareCallback, x: number, y: number, z: number, r: number): number {
+export function square(callback: SquareCallback, x: number, y: number, z: number, r: number): number {
   if (r < 1) {
     callback(x, y, z);
     return 1;
@@ -55,7 +57,7 @@ function square(callback: SquareCallback, x: number, y: number, z: number, r: nu
   return cnt;
 }
 
-function ring(callback: SquareCallback, x: number, y: number, z: number, r1: number, r2?: number): number {
+export function ring(callback: SquareCallback, x: number, y: number, z: number, r1: number, r2?: number): number {
   if (r2 === undefined) {
     r2 = r1;
     r1 = 0;
@@ -65,7 +67,7 @@ function ring(callback: SquareCallback, x: number, y: number, z: number, r1: num
   return cnt;
 }
 
-function heat(
+export function heat(
   callback: SquareCallback,
   x: number,
   y: number,

@@ -1,6 +1,40 @@
-"use strict";
+import { Vector } from './vector.js';
+import { MapWidget } from './map.js';
+import { LAYERS, ALL_LAYERS } from './layers.js';
+const locations = {
+    bel: {
+        pos: new Vector(40373076, 22579095),
+        caption: 'XKCD Ship',
+        go: function () {
+            map.locate(this.pos);
+            LAYERS.xkcd_tiles.visible = true;
+        }
+    },
+    ship: {
+        pos: new Vector(43.5 * 2048, 31.5 * 2048),
+        caption: 'XKCD Ship',
+        go: function () {
+            map.locate(this.pos);
+            LAYERS.xkcd_tiles.visible = true;
+        }
+    },
+    map: {
+        pos: new Vector(12482409, 27045819),
+        caption: 'RoadDogs map',
+        go: function () {
+            map.locate(this.pos);
+            LAYERS.map_tiles.visible = true;
+        }
+    },
+    zero: {
+        pos: new Vector(0, 0),
+        caption: 'Zero point',
+        go: function () {
+            map.locate(this.pos);
+        }
+    }
+};
 let map;
-let layer_background;
 (function () {
     function init() {
         // try to get start position form URL

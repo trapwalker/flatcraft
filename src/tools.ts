@@ -1,6 +1,6 @@
 /// AvgRing, Iter and other small shared utilities.
 
-function Iter<T>(array: ArrayLike<T>): () => T {
+export function Iter<T>(array: ArrayLike<T>): () => T {
   let idx = 0;
   return function iterator(): T {
     idx += 1;
@@ -18,7 +18,7 @@ interface LogPrintFn {
   LOG_ITEMS_LIMIT: number;
 }
 
-const logPrint = (function (text: string): void {
+export const logPrint = (function (text: string): void {
   const con = document.getElementById('console');
   if (con) {
     while (logPrint.log_counter >= logPrint.LOG_ITEMS_LIMIT) {
@@ -38,7 +38,7 @@ logPrint.log_counter = 0;
 logPrint.LOG_ITEMS_LIMIT = 100;
 
 /// AvgRing ///////////////////////////////////////////////////////////////////////////////////////
-class AvgRing {
+export class AvgRing {
   size: number;
   private _buffer: number[];
   private _head: number;

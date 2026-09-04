@@ -4,16 +4,12 @@
  * Preserves the original loosely-typed API: every method accepts either
  * two numbers `(x, y)`, a single number (used for both axes), or an
  * object shaped like `{x, y}`.
+ *
+ * `XY`/`XArg` moved to src/types/geometry.d.ts (ambient, no import needed here or anywhere
+ * else) when this file became a real ES module — see that file's header comment.
  */
 
-interface XY {
-  x: number;
-  y: number;
-}
-
-type XArg = number | XY;
-
-class Vector implements XY {
+export class Vector implements XY {
   x: number;
   y: number;
 

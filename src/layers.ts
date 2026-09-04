@@ -1,5 +1,14 @@
 // Layers =========================================================================
 
+import { Vector } from './vector.js';
+import { BASE_COLOR, DEBUG } from './defines.js';
+import { Iter } from './tools.js';
+import { load_tree, leafFunction } from './tile_tree.js';
+import { Tile, TSCache } from './tile_source.js';
+import type { TileSource } from './tile_source.js';
+import { Layer, TiledLayer } from './map.js';
+import type { MapWidget } from './map.js';
+
 function makeTileGetter(uriBuilder: (x: number, y: number, z: number) => string): (x: number, y: number, z: number) => Tile {
   return function (x: number, y: number, z: number): Tile {
     const path = uriBuilder(x, y, z);
@@ -99,7 +108,7 @@ function drawDebugInfo(this: Layer, map: MapWidget): void {
   );
 }
 
-const LAYERS: Record<string, Layer> = {
+export const LAYERS: Record<string, Layer> = {
   background: new Layer({
     name: 'Background',
     color: BASE_COLOR,
@@ -216,7 +225,7 @@ const LAYERS: Record<string, Layer> = {
   })
 };
 
-const ALL_LAYERS: Layer[] = [
+export const ALL_LAYERS: Layer[] = [
   LAYERS.background,
   LAYERS.map_tiles_back,
   LAYERS.map_tiles_front,

@@ -1,3 +1,9 @@
+import { Vector } from './vector.js';
+import type { Tile, TileSource } from './tile_source.js';
+import { isHeatableTileSource } from './tile_source.js';
+import { Transform2D } from './transform2d.js';
+import { AvgRing } from './tools.js';
+
 /// MapWidget /////////////////////////////////////////////////////////////////////////////////////
 // Recognized against both KeyboardEvent.key (works for the numpad too, as long as NumLock is
 // on — browsers report "+"/"-" for it just like the main row) and KeyboardEvent.code (covers
@@ -5,7 +11,7 @@
 const DEFAULT_ZOOM_IN_KEYS = ['+', '=', 'NumpadAdd'];
 const DEFAULT_ZOOM_OUT_KEYS = ['-', 'NumpadSubtract'];
 
-interface MapWidgetOptions {
+export interface MapWidgetOptions {
   scrollType?: string;
   location?: Vector;
   onLocate?: (x: number, y: number) => void;
@@ -19,7 +25,7 @@ interface MapWidgetOptions {
   zoomOutKeys?: string[];
 }
 
-class MapWidget { // todo: setup layers
+export class MapWidget { // todo: setup layers
   fps_stat: AvgRing;
   dt_stat: AvgRing;
   layers: Layer[];
@@ -29,6 +35,14 @@ class MapWidget { // todo: setup layers
   container: HTMLElement;
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
+
+  // AFF-3: world <-> "centered viewport space" (origin at the canvas center, no rotation yet)
+  // transform, kept in sync with `c`/`zoom_factor` every frame in onRepaint(). See
+  // screenToWorld/worldToScreen below for the remaining step to actual canvas pixel
+  // coordinates (top-left origin) — deliberately not folded into `camera` itself, since that
+  // offset depends on live canvas.width/height, not on a transform property. AFF-4/ROT-*/VP-*
+  // build on this same node (nested layer transforms, rotation, child viewports).
+  camera: Transform2D;
 
   c: Vector; // todo: use property notation with getter and setter
   is_scrolling_now: boolean;
@@ -80,6 +94,10 @@ class MapWidget { // todo: setup layers
     this.zoom_factor = 1;
     this.zoom_step = (this.zoom_max - this.zoom_min) / 64;
     this.zoom_target = this.zoom_factor;
+
+    this.camera = new Transform2D();
+    this.camera.setTranslation(this.c.x, this.c.y);
+    this.camera.setScale(1 / this.zoom_factor);
 
     this.onResize_callback = () => { this.onResize(); }; // todo: узнать и сделать правильным способом
     this.onRepaint_callback = () => { this.onRepaint(); }; // todo: узнать и сделать правильным способом
@@ -146,11 +164,11 @@ class MapWidget { // todo: setup layers
     });
 
     this.canvas.addEventListener('dblclick', (e: MouseEvent) => {
-      const w = this.container.clientWidth;
-      const h = this.container.clientHeight;
-      const new_x = (e.pageX - w / 2) / this.zoom_factor + this.c.x;
-      const new_y = (e.pageY - h / 2) / this.zoom_factor + this.c.y;
-      this.locate(new_x, new_y);
+      // AFF-3: was `e.pageX/pageY` against container-relative w/2,h/2 — only correct when the
+      // canvas sits at the page origin with no scroll. `e.offsetX/offsetY` are relative to the
+      // canvas itself, which is what screenToWorld expects.
+      const worldPoint = this.screenToWorld({ x: e.offsetX, y: e.offsetY });
+      this.locate(worldPoint.x, worldPoint.y);
 
       this.update_url_position();
 
@@ -238,6 +256,13 @@ class MapWidget { // todo: setup layers
     this._dx = 0;
     this._dy = 0;
 
+    // AFF-3: keep the camera in sync with this frame's resolved position/zoom. Transform2D's
+    // setters no-op when the value hasn't actually changed, so this is cheap even though it
+    // runs every frame regardless of whether pan/zoom actually moved this tick.
+    this.camera.x = this.c.x;
+    this.camera.y = this.c.y;
+    this.camera.setScale(1 / this.zoom_factor);
+
     for (let i = 0; i < layers.length; i++) {
       const layer = layers[i];
       if (layer.visible) layer.draw(this);
@@ -266,6 +291,18 @@ class MapWidget { // todo: setup layers
     this.locate(this.c.x + dx, this.c.y + dy);
   }
 
+  /** Actual canvas pixel coordinates (top-left origin, e.g. from `event.offsetX/offsetY`) -> world coordinates. */
+  screenToWorld(screenPoint: XY): XY {
+    const centered = { x: screenPoint.x - this.canvas.width / 2, y: screenPoint.y - this.canvas.height / 2 };
+    return this.camera.localToWorld(centered);
+  }
+
+  /** World coordinates -> actual canvas pixel coordinates (top-left origin). */
+  worldToScreen(worldPoint: XY): XY {
+    const centered = this.camera.worldToLocal(worldPoint);
+    return { x: centered.x + this.canvas.width / 2, y: centered.y + this.canvas.height / 2 };
+  }
+
   zoomIn(): void {
     this.zoom_target = Math.min(this.zoom_target * (1 + this.zoom_step_factor), this.zoom_max);
   }
@@ -277,7 +314,7 @@ class MapWidget { // todo: setup layers
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 /// Layer /////////////////////////////////////////////////////////////////////////////////////////
-interface LayerOptions {
+export interface LayerOptions {
   name?: string;
   shift?: Vector;
   onDraw?: (this: Layer, map: MapWidget) => void;
@@ -288,7 +325,7 @@ interface LayerOptions {
   [key: string]: unknown;
 }
 
-class Layer {
+export class Layer {
   name?: string;
   shift: Vector;
   onDraw?: (this: Layer, map: MapWidget) => void;
@@ -311,7 +348,7 @@ class Layer {
 }
 
 /// TiledLayer ////////////////////////////////////////////////////////////////////////////////////
-interface TiledLayerOptions extends LayerOptions {
+export interface TiledLayerOptions extends LayerOptions {
   tile_source?: TileSource;
   tile_size?: number;
   onTileDraw?: (
@@ -328,7 +365,7 @@ interface TiledLayerOptions extends LayerOptions {
   z_max?: number;
 }
 
-interface LevelParams {
+export interface LevelParams {
   z: number;
   k: number;
   tile_size: number;
@@ -339,7 +376,7 @@ interface LevelParams {
   dy: number;
 }
 
-class TiledLayer extends Layer {
+export class TiledLayer extends Layer {
   tile_source?: TileSource;
   tile_size: number;
   onTileDraw?: TiledLayerOptions['onTileDraw'];

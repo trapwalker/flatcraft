@@ -1,11 +1,14 @@
-"use strict";
+import { Vector } from './vector.js';
+import { isHeatableTileSource } from './tile_source.js';
+import { Transform2D } from './transform2d.js';
+import { AvgRing } from './tools.js';
 /// MapWidget /////////////////////////////////////////////////////////////////////////////////////
 // Recognized against both KeyboardEvent.key (works for the numpad too, as long as NumLock is
 // on — browsers report "+"/"-" for it just like the main row) and KeyboardEvent.code (covers
 // "NumpadAdd"/"NumpadSubtract" specifically, in case a layout ever reports a different `key`).
 const DEFAULT_ZOOM_IN_KEYS = ['+', '=', 'NumpadAdd'];
 const DEFAULT_ZOOM_OUT_KEYS = ['-', 'NumpadSubtract'];
-class MapWidget {
+export class MapWidget {
     constructor(container_id, options) {
         this.fps_stat = new AvgRing(100);
         this.dt_stat = new AvgRing(100);
@@ -25,6 +28,9 @@ class MapWidget {
         this.zoom_factor = 1;
         this.zoom_step = (this.zoom_max - this.zoom_min) / 64;
         this.zoom_target = this.zoom_factor;
+        this.camera = new Transform2D();
+        this.camera.setTranslation(this.c.x, this.c.y);
+        this.camera.setScale(1 / this.zoom_factor);
         this.onResize_callback = () => { this.onResize(); }; // todo: узнать и сделать правильным способом
         this.onRepaint_callback = () => { this.onRepaint(); }; // todo: узнать и сделать правильным способом
         this.container.appendChild(this.canvas);
@@ -79,11 +85,11 @@ class MapWidget {
             this._mouse_move_flag = 0;
         });
         this.canvas.addEventListener('dblclick', (e) => {
-            const w = this.container.clientWidth;
-            const h = this.container.clientHeight;
-            const new_x = (e.pageX - w / 2) / this.zoom_factor + this.c.x;
-            const new_y = (e.pageY - h / 2) / this.zoom_factor + this.c.y;
-            this.locate(new_x, new_y);
+            // AFF-3: was `e.pageX/pageY` against container-relative w/2,h/2 — only correct when the
+            // canvas sits at the page origin with no scroll. `e.offsetX/offsetY` are relative to the
+            // canvas itself, which is what screenToWorld expects.
+            const worldPoint = this.screenToWorld({ x: e.offsetX, y: e.offsetY });
+            this.locate(worldPoint.x, worldPoint.y);
             this.update_url_position();
             e.stopPropagation();
         });
@@ -157,6 +163,12 @@ class MapWidget {
         }
         this._dx = 0;
         this._dy = 0;
+        // AFF-3: keep the camera in sync with this frame's resolved position/zoom. Transform2D's
+        // setters no-op when the value hasn't actually changed, so this is cheap even though it
+        // runs every frame regardless of whether pan/zoom actually moved this tick.
+        this.camera.x = this.c.x;
+        this.camera.y = this.c.y;
+        this.camera.setScale(1 / this.zoom_factor);
         for (let i = 0; i < layers.length; i++) {
             const layer = layers[i];
             if (layer.visible)
@@ -180,6 +192,16 @@ class MapWidget {
     scroll(dx, dy) {
         this.locate(this.c.x + dx, this.c.y + dy);
     }
+    /** Actual canvas pixel coordinates (top-left origin, e.g. from `event.offsetX/offsetY`) -> world coordinates. */
+    screenToWorld(screenPoint) {
+        const centered = { x: screenPoint.x - this.canvas.width / 2, y: screenPoint.y - this.canvas.height / 2 };
+        return this.camera.localToWorld(centered);
+    }
+    /** World coordinates -> actual canvas pixel coordinates (top-left origin). */
+    worldToScreen(worldPoint) {
+        const centered = this.camera.worldToLocal(worldPoint);
+        return { x: centered.x + this.canvas.width / 2, y: centered.y + this.canvas.height / 2 };
+    }
     zoomIn() {
         this.zoom_target = Math.min(this.zoom_target * (1 + this.zoom_step_factor), this.zoom_max);
     }
@@ -187,7 +209,7 @@ class MapWidget {
         this.zoom_target = Math.max(this.zoom_target * (1 - this.zoom_step_factor), this.zoom_min);
     }
 }
-class Layer {
+export class Layer {
     constructor(options) {
         this.name = options && options.name;
         this.shift = (options && options.shift) || new Vector(0, 0);
@@ -201,7 +223,7 @@ class Layer {
         }
     }
 }
-class TiledLayer extends Layer {
+export class TiledLayer extends Layer {
     constructor(options) {
         super(options);
         this.tile_source = options && options.tile_source;

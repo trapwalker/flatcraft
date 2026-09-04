@@ -1,5 +1,5 @@
-"use strict";
-class TileSource {
+import { heat } from './tile_tree.js';
+export class TileSource {
     constructor(options) {
         this.name = options && options.name;
         this.onGet = options && options.onGet;
@@ -13,7 +13,7 @@ class TileSource {
         return undefined;
     }
 }
-class TSCache extends TileSource {
+export class TSCache extends TileSource {
     constructor(options) {
         super(options);
         this.cache_size = 0;
@@ -58,10 +58,10 @@ class TSCache extends TileSource {
         return tile;
     }
 }
-function isHeatableTileSource(source) {
+export function isHeatableTileSource(source) {
     return typeof source.heat === 'function';
 }
-class Tile {
+export class Tile {
     constructor(x, y, z, options) {
         this.x = x;
         this.y = y;

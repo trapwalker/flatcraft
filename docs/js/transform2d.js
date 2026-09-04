@@ -6,13 +6,13 @@
 // AFF-4 will give each Layer (and later VP-* nested viewports) its own coordinate system —
 // see BACKLOG.md, "Фаза 1"/"Фаза 6".
 //
-// Same module-system note as mat2d.ts: this is a real ES module (export class Transform2D),
-// unlike the rest of src/ (global scripts, see docs/index.html) — not wired into the browser
-// build yet, only reachable from tests until AFF-4 lands.
+// Same module-system note as mat2d.ts: this is a real ES module (export class Transform2D).
+// Since AFF-3, it IS wired into the browser build (map.ts imports it for MapWidget.camera) —
+// the whole of src/ moved to real ES modules for that; see docs/index.html and BACKLOG.md.
 //
 // Skew is intentionally not implemented (BACKLOG.md calls it optional) — out of scope for now,
 // to keep this a small, well-tested primitive rather than a speculative superset.
-import { Mat2D } from './mat2d';
+import { Mat2D } from './mat2d.js';
 export class Transform2D {
     constructor(parent = null) {
         this._x = 0;

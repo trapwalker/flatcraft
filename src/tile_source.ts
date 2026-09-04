@@ -1,11 +1,13 @@
+import { heat } from './tile_tree.js';
+
 /// TileSource ////////////////////////////////////////////////////////////////////////////////////
-interface TileSourceOptions {
+export interface TileSourceOptions {
   name?: string;
   onGet?: (this: TileSource, x: number, y: number, z: number) => Tile | null | undefined;
   tile_size: number;
 }
 
-class TileSource {
+export class TileSource {
   name?: string;
   onGet?: (this: TileSource, x: number, y: number, z: number) => Tile | null | undefined;
   tile_size: number;
@@ -33,7 +35,7 @@ interface QueuedTile {
   z: number;
 }
 
-class TSCache extends TileSource {
+export class TSCache extends TileSource {
   cache_size: number;
   storage: Record<string, Tile | null | undefined>;
   load_queue: QueuedTile[];
@@ -96,18 +98,18 @@ class TSCache extends TileSource {
 // TileSource that also exposes `heat()` (currently only TSCache) gets its background
 // preloading driven automatically by the visible tile range, instead of relying on call
 // sites to remember to invoke `heat()` themselves (which, before LOAD-1, nothing did).
-interface HeatableTileSource extends TileSource {
+export interface HeatableTileSource extends TileSource {
   heat(x: number, y: number, z: number, r1?: number, r2?: number, zup?: number, zdn?: number): void;
 }
 
-function isHeatableTileSource(source: TileSource): source is HeatableTileSource {
+export function isHeatableTileSource(source: TileSource): source is HeatableTileSource {
   return typeof (source as Partial<HeatableTileSource>).heat === 'function';
 }
 
 // todo: метод прогрева прямоугольной зоны слоя
 // todo: метод освобождения вне прямоугольной зоны слоя
 /// Tile //////////////////////////////////////////////////////////////////////////////////////////
-interface TileOptions {
+export interface TileOptions {
   kind?: string;
   state?: string;
   data?: unknown;
@@ -115,7 +117,7 @@ interface TileOptions {
   image?: CanvasImageSource;
 }
 
-class Tile {
+export class Tile {
   x: number;
   y: number;
   z: number;

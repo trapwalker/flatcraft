@@ -11,21 +11,19 @@
     <div id="workfield">
     </div>
 
+    <!-- Classic (non-module) scripts, in load order: these set up globals/polyfills that the
+         ES module entry point below relies on without importing (Math.log2 polyfill, the
+         vendored dat.gui UMD global, and the generated xkcd tile data blob — see
+         src/types/dat-gui.d.ts and src/types/tiles-data.d.ts for their ambient typings).
+         Classic scripts always finish running before a deferred `type="module"` script starts,
+         so load order between the two groups doesn't matter, only within each group. -->
     <script src="js/crossbrowser_patch.js"></script>
-
     <script src='js/dat.gui.min.js'></script>
-
-    <script src="js/vector.js"></script>
-    <script src="js/defines.js"></script>
-    <script src="js/tools.js"></script>
-
     <script src="js/full_xkcd_ts_data.js"></script>
-    
-    <script src="js/tile_tree.js"></script>    
-    <script src="js/tile_source.js"></script>
-    <script src="js/map.js"></script>    
-    <script src="js/layers.js"></script>
-    
-    <script src="js/index.js"></script>
+
+    <!-- Everything else is a real ES module now (see BACKLOG.md, AFF-3) — index.js imports the
+         whole dependency graph (map.js, layers.js, etc.) itself, so it's the only script tag
+         needed here. -->
+    <script type="module" src="js/index.js"></script>
   </body>
 </html>

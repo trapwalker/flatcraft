@@ -1,13 +1,12 @@
-"use strict";
 /// AvgRing, Iter and other small shared utilities.
-function Iter(array) {
+export function Iter(array) {
     let idx = 0;
     return function iterator() {
         idx += 1;
         return array[idx - 1];
     };
 }
-const logPrint = function (text) {
+export const logPrint = function (text) {
     const con = document.getElementById('console');
     if (con) {
         while (logPrint.log_counter >= logPrint.LOG_ITEMS_LIMIT) {
@@ -24,7 +23,7 @@ const logPrint = function (text) {
 logPrint.log_counter = 0;
 logPrint.LOG_ITEMS_LIMIT = 100;
 /// AvgRing ///////////////////////////////////////////////////////////////////////////////////////
-class AvgRing {
+export class AvgRing {
     constructor(size) {
         this.size = size;
         this._buffer = [];

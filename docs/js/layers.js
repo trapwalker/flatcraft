@@ -1,5 +1,10 @@
-"use strict";
 // Layers =========================================================================
+import { Vector } from './vector.js';
+import { BASE_COLOR, DEBUG } from './defines.js';
+import { Iter } from './tools.js';
+import { load_tree, leafFunction } from './tile_tree.js';
+import { Tile, TSCache } from './tile_source.js';
+import { Layer, TiledLayer } from './map.js';
 function makeTileGetter(uriBuilder) {
     return function (x, y, z) {
         const path = uriBuilder(x, y, z);
@@ -71,7 +76,7 @@ function drawDebugInfo(map) {
         + '..' + Math.round(dt_range[1] * 1000)
         + '] ', w - 300, h - 60);
 }
-const LAYERS = {
+export const LAYERS = {
     background: new Layer({
         name: 'Background',
         color: BASE_COLOR,
@@ -175,7 +180,7 @@ const LAYERS = {
         visible: DEBUG
     })
 };
-const ALL_LAYERS = [
+export const ALL_LAYERS = [
     LAYERS.background,
     LAYERS.map_tiles_back,
     LAYERS.map_tiles_front,

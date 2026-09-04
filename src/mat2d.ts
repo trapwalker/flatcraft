@@ -11,17 +11,13 @@
 // block for the affine transform stack described in BACKLOG.md (Transform2D/Viewport nodes,
 // per-layer coordinate systems, rotation, nested viewports) — see the "Фаза 1" section there.
 //
-// Unlike the rest of src/ (plain global-scope scripts, concatenated into the browser build via
-// <script> tags with no import/export — see docs/index.html), this file IS a real ES module
-// (it has `export`), so it can be unit-tested with vitest (see mat2d.test.ts) without dragging
-// the whole codebase into a module-system migration up front. It only references the ambient
-// global `XY` interface from vector.ts by *type* (types are compile-time only, so a non-module
-// global file's interface is visible from a module file without an import) and never touches
-// `Vector` as a value — so nothing here needs an `import`. It isn't wired into docs/index.html
-// yet either: nothing in the browser build consumes it until AFF-2/AFF-3/AFF-4 land. When
-// MapWidget/Layer start consuming Mat2D/Transform2D for real, that's the point where the rest of
-// src/ will need to move to ES modules too (and docs/index.html's <script> tags to
-// type="module") — a deliberate, tracked decision, not something to back into by accident.
+// This file is a real ES module (it has `export`), so it can be unit-tested with vitest (see
+// mat2d.test.ts). It references the ambient global `XY` interface (src/types/geometry.d.ts) by
+// *type* only (types are compile-time only, so an ambient global interface is visible from a
+// module file without an import) and never touches `Vector` as a value — so it needs no import
+// of its own. Since AFF-3, it IS wired into the browser build transitively (map.ts imports
+// Transform2D, which imports this) — the whole of src/ moved to real ES modules for that; see
+// docs/index.html and BACKLOG.md.
 
 export class Mat2D {
   constructor(

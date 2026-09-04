@@ -1,12 +1,14 @@
-"use strict";
 /**
  * Vector
  *
  * Preserves the original loosely-typed API: every method accepts either
  * two numbers `(x, y)`, a single number (used for both axes), or an
  * object shaped like `{x, y}`.
+ *
+ * `XY`/`XArg` moved to src/types/geometry.d.ts (ambient, no import needed here or anywhere
+ * else) when this file became a real ES module — see that file's header comment.
  */
-class Vector {
+export class Vector {
     constructor(x, y) {
         const [rx, ry] = Vector._resolve(x, y);
         this.x = rx || 0;

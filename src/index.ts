@@ -1,5 +1,52 @@
+import { Vector } from './vector.js';
+import { MapWidget } from './map.js';
+import { LAYERS, ALL_LAYERS } from './layers.js';
+
+// Locations ======================================================================
+// Moved here from defines.ts when the codebase became real ES modules: `go()` needs the live
+// `map` instance and `LAYERS`, both local to this file — keeping this here avoids a
+// defines.ts <-> index.ts <-> layers.ts import cycle for what's UI wiring, not config.
+interface LocationDef {
+  pos: Vector;
+  caption: string;
+  go: (this: LocationDef) => void;
+}
+
+const locations: Record<string, LocationDef> = {
+  bel: {
+    pos: new Vector(40373076, 22579095),
+    caption: 'XKCD Ship',
+    go: function (this: LocationDef) {
+      map.locate(this.pos);
+      LAYERS.xkcd_tiles.visible = true;
+    }
+  },
+  ship: {
+    pos: new Vector(43.5 * 2048, 31.5 * 2048),
+    caption: 'XKCD Ship',
+    go: function (this: LocationDef) {
+      map.locate(this.pos);
+      LAYERS.xkcd_tiles.visible = true;
+    }
+  },
+  map: {
+    pos: new Vector(12482409, 27045819),
+    caption: 'RoadDogs map',
+    go: function (this: LocationDef) {
+      map.locate(this.pos);
+      LAYERS.map_tiles.visible = true;
+    }
+  },
+  zero: {
+    pos: new Vector(0, 0),
+    caption: 'Zero point',
+    go: function (this: LocationDef) {
+      map.locate(this.pos);
+    }
+  }
+};
+
 let map: MapWidget;
-let layer_background: Layer | undefined;
 
 (function () {
   function init(): void {

@@ -1,4 +1,8 @@
-// Standalone scratch page (test_heating.html): loads only tile_tree.js + this file.
+// Standalone scratch page (test_heating.html): loads only this file, as an ES module,
+// which imports `heat` from tile_tree.js itself now (previously both were plain classic
+// scripts sharing a global scope).
+import { heat } from './tile_tree.js';
+
 const cnv = (window as unknown as Record<string, HTMLCanvasElement>)['canvas'];
 const ctx = cnv.getContext('2d') as CanvasRenderingContext2D;
 const w = cnv.width;
