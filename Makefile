@@ -8,19 +8,22 @@
 # The Python code under flatcraft/, world/ and deploy/ is an older,
 # unrelated prototype (Python 2 era) and is intentionally out of scope for
 # these targets; `test` only covers world/'s own unit tests, best-effort.
+# Client-side (TypeScript) unit tests live under src/*.test.ts (vitest) and
+# run via `test-client` — see BACKLOG.md, INFRA-1.
 
 NGINX_LIVE_DIR := /home/svp/nginx/www/sublayers.net.retired-by-symlink
 
-.PHONY: install build watch typecheck clean test deploy help
+.PHONY: install build watch typecheck clean test test-client deploy help
 
 help:
-	@echo "make install    — install client (TypeScript) dependencies"
-	@echo "make build      — compile src/*.ts to docs/js/*.js"
-	@echo "make watch      — recompile on change"
-	@echo "make typecheck  — type-check only, no output files"
-	@echo "make clean      — remove compiled JS/maps and node_modules"
-	@echo "make test       — run the legacy world/ Python unit tests (best-effort)"
-	@echo "make deploy     — build, then report deploy status (nginx serves docs/ directly)"
+	@echo "make install     — install client (TypeScript) dependencies"
+	@echo "make build       — compile src/*.ts to docs/js/*.js"
+	@echo "make watch       — recompile on change"
+	@echo "make typecheck   — type-check only, no output files"
+	@echo "make clean       — remove compiled JS/maps and node_modules"
+	@echo "make test        — run the legacy world/ Python unit tests (best-effort)"
+	@echo "make test-client — run the client (TypeScript) unit tests (vitest)"
+	@echo "make deploy      — build, then report deploy status (nginx serves docs/ directly)"
 
 install:
 	npm install
@@ -40,6 +43,9 @@ clean:
 
 test:
 	-python3 -m pytest world -q
+
+test-client:
+	npm test
 
 deploy: build
 	@echo "docs/ compiled. nginx (container nginx-nginx-1) serves it directly"
