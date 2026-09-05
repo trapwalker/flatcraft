@@ -51,6 +51,20 @@ const ZOOM_EDGE_SOFTNESS = 0.5;
 // magnitudes for the same gesture, which is exactly the point of scaling by it rather than
 // treating every event as one full step.
 const WHEEL_DELTA_PER_STEP = 100;
+// ZOOM-14: multiplier applied to a trackpad pinch-to-zoom `wheel` event's `deltaY` before it
+// enters _wheelZoom's existing clamped-proportional formula (see WHEEL_DELTA_PER_STEP above) — by
+// direct user report, pinch-zoom on a Mac trackpad worked but felt "very weak, boost it several
+// times over". Root cause: the pinch branch (`e.ctrlKey || e.metaKey`) shares the exact same
+// formula as plain mouse-wheel, which is calibrated to a physical wheel notch's `|deltaY| ≈ 100`
+// (WHEEL_DELTA_PER_STEP) — but a trackpad pinch reports `deltaY` an order of magnitude smaller per
+// event (single digits — see classifyWheelEvent's own `Math.abs(value) < 4` "definitely trackpad"
+// threshold and BACKLOG.md's ZOOM-12 citations), so the same formula gives pinch a barely
+// perceptible step per event. Picked "on feel", not measured (no real trackpad in this sandbox —
+// same limitation as ZOOM-10/ZOOM-12/ZOOM-13's own constants), safe to retune after testing on
+// real hardware. The existing WHEEL_DELTA_PER_STEP clamp still applies AFTER this multiplier, so
+// it also caps pinch's largest possible single-event step at the same ceiling as one mouse notch —
+// this is deliberate (see _wheelZoom), not just a side effect.
+const PINCH_ZOOM_SENSITIVITY = 10;
 // ZOOM-12: device-classification heuristic for a `wheel` event — is this actually a mouse wheel,
 // or a laptop trackpad synthesizing `wheel` events for a two-finger swipe/pinch? The web platform
 // gives no reliable first-class signal for this (confirmed by several independent sources — see
@@ -266,9 +280,10 @@ export class MapWidget {
                 // Pinch-to-zoom (trackpad two-finger pinch, or a physical Ctrl+wheel) — the browser sets
                 // this flag specifically for that gesture (documented convention for canvas apps; Chrome
                 // since M35, Firefox since 55), so it never needs the device-classification heuristic
-                // below at all. Same zoom path a classified 'wheel' event uses (ZOOM-9/ZOOM-10),
-                // unchanged.
-                this._wheelZoom(e);
+                // below at all. Same zoom path a classified 'wheel' event uses (ZOOM-9/ZOOM-10), boosted
+                // by PINCH_ZOOM_SENSITIVITY (ZOOM-14) since a pinch's per-event deltaY is much smaller
+                // than a mouse notch's — see that constant's comment.
+                this._wheelZoom(e, PINCH_ZOOM_SENSITIVITY);
                 e.preventDefault();
                 return;
             }
@@ -902,9 +917,11 @@ export class MapWidget {
     }
     // ZOOM-9/ZOOM-10/ZOOM-12: the wheel-driven zoom step, pulled out of the `wheel` listener so
     // ZOOM-12's ctrlKey/pinch branch and its 'wheel'-classified branch can both reach it without
-    // duplicating the logic.
-    _wheelZoom(e) {
-        const dy = -e.deltaY;
+    // duplicating the logic. `sensitivity` (ZOOM-14) defaults to 1 — the 'wheel'-classified call
+    // site below passes nothing and behaves exactly as before; only the ctrlKey/pinch branch passes
+    // PINCH_ZOOM_SENSITIVITY.
+    _wheelZoom(e, sensitivity = 1) {
+        const dy = -e.deltaY * sensitivity;
         if (dy === 0)
             return;
         // ZOOM-1: keep whatever's under the cursor fixed in place as the zoom eases in.
