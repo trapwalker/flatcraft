@@ -878,9 +878,32 @@ export class TiledLayer extends Layer {
     if (tile && tile.image) {
       const ctx = map.ctx;
       if (gridMatrix) {
+        // ZOOM-10: setTransform to `gridMatrix` AS-IS (its own e/f) and draw at the tile's raw
+        // index (ix, iy) — the original AFF-4 approach — bakes the *combined* translation
+        // (camera position folded in, tens of millions at this world's scale) into the canvas's
+        // internal transform. That CTM is stored in single precision by the browser's rasterizer
+        // (confirmed empirically — see BACKLOG.md), so at deep zoom (tile indices in the
+        // 10^5-10^6 range, translation to match) it loses several *device pixels* of accuracy —
+        // invisible while every frame rounds the same way, but the true (double-precision)
+        // translation is shifting by a fraction of a pixel every frame during any zoom easing or
+        // rotation, and each frame's rounding lands differently: the tile visibly trembles by a
+        // few pixels, at any zoom (worst at max, where translation magnitude — and so absolute
+        // rounding error — is largest) and independent of what's driving the change (wheel,
+        // keyboard, rotation all recompute this matrix every frame alike). The grid/debug
+        // overlays never had this problem because they compute each point in JS double precision
+        // (`gridMatrix.transformPoint`) and hand the rasterizer already-small screen coordinates
+        // directly, never a huge number baked into the CTM itself — see map_grid's onTileDraw.
+        //
+        // Fix: reuse `gridMatrix`'s linear part (a/b/c/d — its magnitude is always moderate,
+        // nowhere near float32's precision limit) but replace its translation with this tile's
+        // own precomputed on-screen top-left corner (`x`/`y`, already an ordinary screen-pixel
+        // value, computed the same way map_grid computes its corners) and draw at local (0,0)
+        // instead of (ix, iy). Mathematically identical placement (verified: local (0,0) maps to
+        // exactly (x, y), same as gridMatrix.transformPoint({x: ix, y: iy}) does) — the only
+        // change is which numbers the CTM itself has to carry.
         ctx.save();
-        ctx.setTransform(gridMatrix.a, gridMatrix.b, gridMatrix.c, gridMatrix.d, gridMatrix.e, gridMatrix.f);
-        ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, ix, iy, 1, 1);
+        ctx.setTransform(gridMatrix.a, gridMatrix.b, gridMatrix.c, gridMatrix.d, x, y);
+        ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, 0, 0, 1, 1);
         ctx.restore();
       } else {
         // No matrix given (e.g. a direct call bypassing draw()) — same pixel-rect draw as before
