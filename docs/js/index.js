@@ -1,39 +1,33 @@
 import { Vector } from './vector.js';
 import { MapWidget } from './map.js';
 import { LAYERS, ALL_LAYERS, ATTRIBUTIONS, MANDELBROT_TILE_SIZE, MANDELBROT_Z_MAX, MANDELBROT_BASE_Z } from './layers.js';
-const locations = {
-    bel: {
-        pos: new Vector(40373076, 22579095),
-        caption: 'XKCD Ship',
-        go: function () {
-            map.locate(this.pos);
-            LAYERS.xkcd_tiles.visible = true;
-        }
-    },
-    ship: {
-        pos: new Vector(43.5 * 2048, 31.5 * 2048),
-        caption: 'XKCD Ship',
-        go: function () {
-            map.locate(this.pos);
-            LAYERS.xkcd_tiles.visible = true;
-        }
-    },
-    map: {
-        pos: new Vector(12482409, 27045819),
-        caption: 'RoadDogs map',
-        go: function () {
-            map.locate(this.pos);
-            LAYERS.map_tiles.visible = true;
-        }
-    },
-    zero: {
-        pos: new Vector(0, 0),
-        caption: 'Zero point',
-        go: function () {
-            map.locate(this.pos);
-        }
-    },
-    mandelbrot: {
+import { BookmarkStore } from './bookmarks.js';
+// Bookmarks (DEMO-7, DEMO_BACKLOG.md) ============================================
+// Replaces the old hand-rolled `locations` object (a hardcoded `{pos, caption, go()}` record,
+// moved here from defines.ts when the codebase became real ES modules) — that was a prototype of
+// exactly the Bookmark idea (BACKLOG.md's BOOKMARK-1), now a real, runtime-mutable BookmarkStore
+// instead. Persistence is this file's job (BookmarkStore itself never touches localStorage — see
+// its own doc comment): loaded from BOOKMARKS_STORAGE_KEY on startup, saved back after every
+// add/remove.
+const BOOKMARKS_STORAGE_KEY = 'flatcraft.bookmarks';
+// The old `locations.bel`'s position, kept as the fallback default location — independent of the
+// seed list below so the two don't have to be kept in sync by array index.
+const DEFAULT_START_POSITION = new Vector(40373076, 22579095);
+// Seed data for a fresh visit with nothing in BOOKMARKS_STORAGE_KEY yet — the old `locations`
+// entries (plus DEMO-4's later "Mandelbrot center" addition), ported as-is (position + which
+// layer each used to flip visible), so the demo doesn't regress to "no quick-jump points at all"
+// the first time this ships. Only used once, by loadOrSeedBookmarks() below; never consulted
+// again afterwards.
+const SEED_BOOKMARKS = [
+    { name: 'XKCD Ship', position: DEFAULT_START_POSITION.clone(), layerId: LAYERS.xkcd_tiles.name },
+    // Was also captioned "XKCD Ship" in the original `locations` object (a pre-existing duplicate
+    // name, unrelated to this ticket) — distinguished here since a bookmark list, unlike a one-off
+    // object literal, actually shows both captions side by side.
+    { name: 'XKCD Ship (tile-aligned)', position: new Vector(43.5 * 2048, 31.5 * 2048), layerId: LAYERS.xkcd_tiles.name },
+    { name: 'RoadDogs map', position: new Vector(12482409, 27045819), layerId: LAYERS.map_tiles.name },
+    { name: 'Zero point', position: new Vector(0, 0) },
+    {
+        name: 'Mandelbrot center',
         // DEMO-4: the world position that keeps the classic "whole set" view centered at every zoom
         // level (not just at MANDELBROT_BASE_Z) — tile-index addressing puts a layer's tile (0,0) at
         // world position (0,0) *at every zoom*, so world (0,0) only shows the base rectangle's
@@ -42,14 +36,32 @@ const locations = {
         // rectangle) instead needs world position (tile_size/2) * 2^(z_max - base_z) on each axis —
         // same derivation a real map's "center tile" position would need, just solved for this
         // layer's own z_max/base_z instead of a real geo pyramid's.
-        pos: new Vector((MANDELBROT_TILE_SIZE / 2) * Math.pow(2, MANDELBROT_Z_MAX - MANDELBROT_BASE_Z), (MANDELBROT_TILE_SIZE / 2) * Math.pow(2, MANDELBROT_Z_MAX - MANDELBROT_BASE_Z)),
-        caption: 'Mandelbrot center', // distinct from the "Mandelbrot set" layer checkbox's own label
-        go: function () {
-            map.locate(this.pos);
-            LAYERS.mandelbrot_tiles.visible = true;
-        }
+        position: new Vector((MANDELBROT_TILE_SIZE / 2) * Math.pow(2, MANDELBROT_Z_MAX - MANDELBROT_BASE_Z), (MANDELBROT_TILE_SIZE / 2) * Math.pow(2, MANDELBROT_Z_MAX - MANDELBROT_BASE_Z)),
+        layerId: LAYERS.mandelbrot_tiles.name
     }
-};
+];
+function loadOrSeedBookmarks() {
+    try {
+        const raw = localStorage.getItem(BOOKMARKS_STORAGE_KEY);
+        if (raw)
+            return BookmarkStore.deserialize(JSON.parse(raw));
+    }
+    catch (e) {
+        console.warn('Failed to load bookmarks from localStorage, starting fresh', e);
+    }
+    const store = new BookmarkStore();
+    for (const bookmark of SEED_BOOKMARKS)
+        store.add(bookmark);
+    return store;
+}
+function saveBookmarks() {
+    try {
+        localStorage.setItem(BOOKMARKS_STORAGE_KEY, JSON.stringify(map.bookmarks.serialize()));
+    }
+    catch (e) {
+        console.warn('Failed to save bookmarks to localStorage', e);
+    }
+}
 let map;
 (function () {
     function init() {
@@ -64,7 +76,7 @@ let map;
         const start_rotation = parts && parts[2] !== undefined ? (Number(parts[2]) * Math.PI) / 180 : undefined;
         map = new MapWidget('workfield', {
             scrollType: 'sliding',
-            location: start_position || locations.bel.pos,
+            location: start_position || DEFAULT_START_POSITION,
             rotation: start_rotation,
             onLocate: function (x, y) {
                 //console.log('onLocate: '+[x, y]);
@@ -74,6 +86,10 @@ let map;
             layers: ALL_LAYERS,
             zoom_level_min: 5
         });
+        // BOOKMARK-1/DEMO-7: MapWidget itself only ever constructs an empty BookmarkStore (see its
+        // own comment in src/map.ts) — replacing it wholesale here is the demo's chosen way to plug
+        // in localStorage-backed persistence without adding any storage concept to the core widget.
+        map.bookmarks = loadOrSeedBookmarks();
         // GUI
         const gui = new dat.GUI();
         gui.add(map, 'zoom_target', map.zoom_min, map.zoom_max).step((map.zoom_max - map.zoom_min) / 64).name('Zoom').listen();
@@ -134,12 +150,58 @@ let map;
         for (const name in overlayLayers) {
             gui_layers.add(overlayLayers[name], 'visible').name(name).listen();
         }
-        const gui_locations = gui.addFolder('Locations');
-        gui_locations.closed = false;
-        for (const location_name in locations) {
-            const location = locations[location_name];
-            gui_locations.add(location, 'go').name(location.caption);
+        // DEMO-7: dat.GUI has no built-in support for a controller list that grows/shrinks at
+        // runtime (the closest existing precedent in this file, the base-layer dropdown/overlay
+        // checkboxes above, is built once from a fixed set and never changes size afterwards).
+        // Simplest approach that actually works: track the controllers this folder currently holds,
+        // and on every add/remove wipe all of them (each controller's own `.remove()` — dat.GUI's
+        // public per-controller removal, see src/types/dat-gui.d.ts) and rebuild fresh ones from
+        // `map.bookmarks.list()`.
+        const gui_bookmarks = gui.addFolder('Bookmarks');
+        gui_bookmarks.closed = false;
+        let bookmarkControllers = [];
+        function rebuildBookmarksFolder() {
+            for (const controller of bookmarkControllers)
+                controller.remove();
+            bookmarkControllers = [];
+            for (const bookmark of map.bookmarks.list()) {
+                // A fresh one-off object per bookmark (dat.GUI's `.add(target, 'method')` binds to a
+                // property on a real object, same as the old `locations[...].go()` pattern) — closes
+                // over this specific bookmark's id, not whichever one happens to be last in the loop.
+                const goHandle = { go: () => map.goToBookmark(bookmark.id) };
+                bookmarkControllers.push(gui_bookmarks.add(goHandle, 'go').name(bookmark.name));
+            }
         }
+        const addBookmarkHandle = {
+            addHere: function () {
+                const name = prompt('Bookmark name?');
+                if (!name)
+                    return; // cancelled, or left blank
+                // DEMO-7: "optionally tie to the active base layer" — implemented as a second
+                // confirm()/prompt() pair (one of the ticket's own suggested options), rather than
+                // auto-detecting "the" active layer: several layers here (background, the grid, the
+                // debug overlay, ...) can be visible=true at once, so there's no single well-defined
+                // layer to guess at without risking a wrong guess — asking is unambiguous where
+                // guessing wouldn't be. (For a base layer specifically, `baseLayerControl.active`
+                // above already names the current one exactly — offered as the default answer.)
+                let layerId;
+                if (confirm('Tie this bookmark to a specific layer? (only that layer\'s visibility will be restored when you jump to it)')) {
+                    const layerName = prompt('Layer name, exactly as shown in the Layers folder:', baseLayerControl.active);
+                    layerId = layerName || undefined;
+                }
+                map.bookmarks.add({
+                    name,
+                    position: map.c.clone(),
+                    zoom: map.zoom_target,
+                    rotation: map.rotation_target,
+                    layerId
+                });
+                saveBookmarks();
+                rebuildBookmarksFolder();
+            }
+        };
+        gui_bookmarks.add(addBookmarkHandle, 'addHere').name('Add bookmark here');
+        rebuildBookmarksFolder();
         gui.close();
         // DEMO-6: demo-local hotkeys for demo-only layers the core (`MapWidget`, src/map.ts) doesn't
         // know by name — a separate `document.addEventListener('keydown', ...)` here rather than

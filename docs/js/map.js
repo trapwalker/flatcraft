@@ -3,6 +3,7 @@ import { isHeatableTileSource } from './tile_source.js';
 import { Transform2D } from './transform2d.js';
 import { Mat2D } from './mat2d.js';
 import { AvgRing } from './tools.js';
+import { BookmarkStore } from './bookmarks.js';
 /// MapWidget /////////////////////////////////////////////////////////////////////////////////////
 // KEY-1: matched primarily against KeyboardEvent.code (the physical key position — "KeyW",
 // "Equal", "BracketLeft" — fixed regardless of the active keyboard layout/language) rather than
@@ -195,6 +196,7 @@ export class MapWidget {
         this.fps_stat = new AvgRing(100);
         this.dt_stat = new AvgRing(100);
         this.layers = (options && options.layers) || []; // todo: скопировать options.layers, привести его к стандартному списку
+        this.bookmarks = new BookmarkStore();
         this.zoom_animation_factor = (options && options.zoom_animation_factor) || 10; // 1~100
         this.zoom_step_factor = (options && options.zoom_step_factor) || 0.2; // 0.1~0.9
         this.container = document.getElementById(container_id); // todo: throw error if not found
@@ -891,6 +893,35 @@ export class MapWidget {
             this.onLocate(this.c.x, this.c.y);
         //this.update_url_position();
         // todo: some recalculate?
+    }
+    /**
+     * BOOKMARK-1: jump to a previously saved Bookmark by id. A no-op if `id` isn't in
+     * `this.bookmarks`. MVP behavior — direct assignment, no animation, same as the demo's
+     * pre-existing `locations[...].go()` pattern (src/index.ts) this generalizes: `flyTo`/`jumpTo`
+     * (BACKLOG.md's FLY-*) can replace this once that phase lands, but doesn't block BOOKMARK-1.
+     *
+     * Layer resolution: this codebase has no stable per-layer id concept to hook into (no field on
+     * `Layer` is documented/guaranteed unique — see BACKLOG.md's BOOKMARK-1 note). Reusing `Layer.name`
+     * — already present and already used to identify a layer for display (e.g. the demo's layer-
+     * visibility checkboxes) — is the smallest reasonable addition: no new field on `Layer`, no new
+     * lookup structure on `MapWidget`. A bookmark whose `layerId` doesn't match any current layer's
+     * `name` (renamed/removed layer, or a typo) silently does nothing to layer visibility rather than
+     * throwing — the position/zoom/rotation part of the jump should still happen either way.
+     */
+    goToBookmark(id) {
+        const bookmark = this.bookmarks.get(id);
+        if (!bookmark)
+            return;
+        this.locate(bookmark.position);
+        if (bookmark.zoom !== undefined)
+            this.zoom_target = bookmark.zoom;
+        if (bookmark.rotation !== undefined)
+            this.rotation_target = bookmark.rotation;
+        if (bookmark.layerId !== undefined) {
+            const layer = this.layers.find((l) => l.name === bookmark.layerId);
+            if (layer)
+                layer.visible = true;
+        }
     }
     // ROT-6: `dx`/`dy` are a *screen*-oriented vector (already scaled by 1/zoom_factor by the
     // caller — see the mouse-drag `_dx`/`_dy` drain and the WASD speed calc in onRepaint) — e.g.

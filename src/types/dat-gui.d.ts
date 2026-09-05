@@ -6,6 +6,10 @@ declare namespace dat {
     step(step: number): GUIController;
     listen(): GUIController;
     onChange(fn: (value: unknown) => void): GUIController;
+    // DEMO-7: removes this controller from whichever GUI/folder it belongs to (delegates to
+    // GUI.remove() internally — see docs/js/dat.gui.min.js's `k.extend(h, {..., remove: ...})`).
+    // Used to rebuild the Bookmarks folder's list of "go" buttons on every add/remove.
+    remove(): GUIController;
   }
 
   class GUI {
