@@ -6,25 +6,30 @@ import { Mat2D } from './mat2d.js';
 import { AvgRing } from './tools.js';
 
 /// MapWidget /////////////////////////////////////////////////////////////////////////////////////
-// Recognized against both KeyboardEvent.key (works for the numpad too, as long as NumLock is
-// on — browsers report "+"/"-" for it just like the main row) and KeyboardEvent.code (covers
-// "NumpadAdd"/"NumpadSubtract" specifically, in case a layout ever reports a different `key`).
-const DEFAULT_ZOOM_IN_KEYS = ['+', '=', 'NumpadAdd'];
-const DEFAULT_ZOOM_OUT_KEYS = ['-', 'NumpadSubtract'];
+// KEY-1: matched primarily against KeyboardEvent.code (the physical key position — "KeyW",
+// "Equal", "BracketLeft" — fixed regardless of the active keyboard layout/language) rather than
+// .key (the character the layout actually produces there — e.g. physical "W" reports .key "ц" on
+// a Russian ЙЦУКЕН layout, silently breaking any match against the letter 'w'). Direct user
+// report: hotkeys stopped responding under a non-Latin layout. .key values are still listed
+// alongside (see the keydown handler's `includes(e.key) || includes(e.code)`) purely so a caller
+// who passes a custom, `.key`-style array through the options (e.g. a literal '+') keeps working
+// — new defaults below are `.code` first.
+const DEFAULT_ZOOM_IN_KEYS = ['Equal', 'NumpadAdd', '+', '='];
+const DEFAULT_ZOOM_OUT_KEYS = ['Minus', 'NumpadSubtract', '-'];
 
 // Continuous-hold navigation (WASD/arrows/Z/X/Q/E) — distinct from the discrete, one-shot
 // zoomInKeys/rotateLeftKeys above (+/-, [/]): these are meant to be held down, like a game
 // camera, and re-evaluated every frame in onRepaint rather than acted on once per keydown.
-// Matched against KeyboardEvent.key.toLowerCase() (see the keydown/keyup handlers) — lowercase
-// throughout so letter keys match regardless of Shift/CapsLock state.
-const DEFAULT_PAN_UP_KEYS = ['w', 'arrowup'];
-const DEFAULT_PAN_DOWN_KEYS = ['s', 'arrowdown'];
-const DEFAULT_PAN_LEFT_KEYS = ['a', 'arrowleft'];
-const DEFAULT_PAN_RIGHT_KEYS = ['d', 'arrowright'];
-const DEFAULT_ZOOM_IN_HOLD_KEYS = ['x'];
-const DEFAULT_ZOOM_OUT_HOLD_KEYS = ['z'];
-const DEFAULT_ROTATE_LEFT_HOLD_KEYS = ['q'];
-const DEFAULT_ROTATE_RIGHT_HOLD_KEYS = ['e'];
+// KEY-1: matched against KeyboardEvent.code exclusively (see the keydown/keyup handlers) — "KeyW"
+// etc. is the physical key position, unaffected by layout/language, unlike .key.
+const DEFAULT_PAN_UP_KEYS = ['KeyW', 'ArrowUp'];
+const DEFAULT_PAN_DOWN_KEYS = ['KeyS', 'ArrowDown'];
+const DEFAULT_PAN_LEFT_KEYS = ['KeyA', 'ArrowLeft'];
+const DEFAULT_PAN_RIGHT_KEYS = ['KeyD', 'ArrowRight'];
+const DEFAULT_ZOOM_IN_HOLD_KEYS = ['KeyX'];
+const DEFAULT_ZOOM_OUT_HOLD_KEYS = ['KeyZ'];
+const DEFAULT_ROTATE_LEFT_HOLD_KEYS = ['KeyQ'];
+const DEFAULT_ROTATE_RIGHT_HOLD_KEYS = ['KeyE'];
 
 // Screen pixels/second, scaled by 1/zoom_factor in use (see onRepaint) so holding a pan key
 // feels consistent with mouse-drag panning — the same screen distance per second regardless of
@@ -210,8 +215,10 @@ export class MapWidget { // todo: setup layers
     this.onZoom = options && options.onZoom;
     this.zoomInKeys = (options && options.zoomInKeys) || DEFAULT_ZOOM_IN_KEYS;
     this.zoomOutKeys = (options && options.zoomOutKeys) || DEFAULT_ZOOM_OUT_KEYS;
-    this.rotateLeftKeys = (options && options.rotateLeftKeys) || ['['];
-    this.rotateRightKeys = (options && options.rotateRightKeys) || [']'];
+    // KEY-1: 'BracketLeft'/'BracketRight' are the .code values for the physical [/] key,
+    // unaffected by layout — see the DEFAULT_* comment above.
+    this.rotateLeftKeys = (options && options.rotateLeftKeys) || ['BracketLeft', '['];
+    this.rotateRightKeys = (options && options.rotateRightKeys) || ['BracketRight', ']'];
     this.resetRotationKeys = (options && options.resetRotationKeys) || ['Home'];
     this.panUpKeys = (options && options.panUpKeys) || DEFAULT_PAN_UP_KEYS;
     this.panDownKeys = (options && options.panDownKeys) || DEFAULT_PAN_DOWN_KEYS;
@@ -277,8 +284,9 @@ export class MapWidget { // todo: setup layers
       // Continuous-hold navigation (WASD/arrows/Z/X/Q/E): just record that the key is down —
       // acted on every frame in onRepaint, not here. Held browser key-repeat re-fires keydown
       // but not keyup, so re-adding an already-present entry is a harmless no-op (Set.add is
-      // idempotent).
-      this._keysDown.add(e.key.toLowerCase());
+      // idempotent). KEY-1: keyed by `.code` (physical key), not `.key.toLowerCase()` — see the
+      // DEFAULT_PAN_*/DEFAULT_*_HOLD_KEYS comment above.
+      this._keysDown.add(e.code);
 
       if (this.zoomInKeys.includes(e.key) || this.zoomInKeys.includes(e.code)) {
         // No cursor position to anchor a keyboard-triggered zoom to — zoom around the center.
@@ -302,7 +310,7 @@ export class MapWidget { // todo: setup layers
     });
 
     document.addEventListener('keyup', (e: KeyboardEvent) => {
-      this._keysDown.delete(e.key.toLowerCase());
+      this._keysDown.delete(e.code);
     });
 
     // If focus leaves the window while a key is held (e.g. Alt+Tab), its keyup may never fire —
