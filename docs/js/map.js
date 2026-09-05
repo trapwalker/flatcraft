@@ -117,7 +117,7 @@ export class MapWidget {
         this._zoom_anchor_screen = null;
         this._touches = new Map();
         this._touch_gesture = null;
-        // TOUCH-1: without this, browsers apply their own gesture handling (page pinch-zoom,
+        // ZOOM-3: without this, browsers apply their own gesture handling (page pinch-zoom,
         // scroll-by-touch, double-tap-to-zoom) to the canvas concurrently with ours — fighting each
         // other and, on some browsers, delaying or suppressing the touch events below entirely until
         // that gesture is resolved. `e.preventDefault()` in the handlers is the actual mechanism;
@@ -241,7 +241,7 @@ export class MapWidget {
             this._mouse_move_flag = 0;
             this._rotate_drag = false;
         });
-        // TOUCH-1: one finger pans; two fingers pan+pinch-zoom+rotate simultaneously (the standard
+        // ZOOM-3: one finger pans; two fingers pan+pinch-zoom+rotate simultaneously (the standard
         // mobile-map gesture set — Google/Apple/Leaflet all do the same three-in-one on two touches).
         // Reuses the existing pan/zoom/rotate machinery rather than duplicating it: pan goes through
         // the same `_dx`/`_dy` accumulator (and so the same scrollType/inertia handling) mouse-drag
@@ -317,8 +317,17 @@ export class MapWidget {
                     // atan2's result wraps at +-PI, so a naive subtraction would jump by ~2*PI right as the
                     // fingers' relative angle crosses that boundary — normalized back into (-PI, PI] via
                     // atan2(sin(d), cos(d)), the standard trick for a correct *shortest* angular delta.
+                    //
+                    // Subtracted, not added: `current.angle - previous.angle` is the change in the
+                    // fingers' angle in *screen/canvas pixel* coordinates (y grows downward). `rotation`
+                    // instead measures how much the camera has turned relative to the *world* — rotating
+                    // the camera by +delta turns the world under it by -delta as seen on screen (the same
+                    // relationship screenToWorld/worldToScreen use camera.worldMatrix vs. its inverse for).
+                    // Adding the raw screen-angle delta therefore turned the map opposite to the fingers —
+                    // direct user report ("вращение крутит карту не в ту сторону"), confirmed by reasoning
+                    // through that relationship rather than by a sign that merely "looked" plausible.
                     const rawDelta = current.angle - previous.angle;
-                    this._drotation += Math.atan2(Math.sin(rawDelta), Math.cos(rawDelta));
+                    this._drotation -= Math.atan2(Math.sin(rawDelta), Math.cos(rawDelta));
                 }
             }
             this._touch_gesture = current;
@@ -481,19 +490,32 @@ export class MapWidget {
         }
         // Скроллинг с инерцией и скольжением
         if (this.scrollType === 'sliding') {
+            // Exact tracking every frame regardless of state — see ZOOM-11 below for why this can no
+            // longer also get an extra, decaying `_scroll_velocity` blended in while still in contact.
             this.scroll(this._dx, this._dy);
             if (this._mouse_down_flag)
-                this._scroll_velocity.set(0, 0);
-            if (this._mouse_move_flag)
-                this._scroll_velocity.add(this._dx * this.sliding_value, this._dy * this.sliding_value);
-            // ROT-6: routed through scroll() (not a direct this.c.add()) so the same rotation
-            // treatment as every other pan path applies here too — this velocity is a screen-oriented
-            // vector same as _dx/_dy, just accumulated over time.
-            if (this._scroll_velocity.length2())
+                this._scroll_velocity.set(0, 0); // new press/touch cancels any residual glide from a previous release
+            if (this._mouse_move_flag) {
+                // ZOOM-11: in contact (mouse button down, or a touch active) — track the cursor/fingers
+                // exactly, with no inertia blended in yet. `_scroll_velocity` here is only ever a
+                // *candidate* release velocity: `.set()`, not `.add()`, so it's overwritten every frame
+                // with just this frame's motion rather than accumulating while held — otherwise a long,
+                // steady drag would keep piling an ever-growing "hangover" on top of the already-exact
+                // `scroll()` above, making tracking increasingly inexact the longer contact lasted (the
+                // bug reported: "карта должна следовать за пальцами в точности... инерция должна
+                // сохраняться только при отпускании"). Whatever this holds at the exact frame contact
+                // ends is what carries on below.
+                this._scroll_velocity.set(this._dx * this.sliding_value, this._dy * this.sliding_value);
+            }
+            else if (this._scroll_velocity.length2()) {
+                // Released: let the velocity captured the instant contact ended continue and decay.
+                // ROT-6: routed through scroll() (not a direct this.c.add()) so the same rotation
+                // treatment as every other pan path applies here too.
                 this.scroll(this._scroll_velocity.x, this._scroll_velocity.y);
-            this._scroll_velocity.div(this.inertion_value + 1);
-            if (this._scroll_velocity.length2() < 0.1)
-                this._scroll_velocity.set(0, 0);
+                this._scroll_velocity.div(this.inertion_value + 1);
+                if (this._scroll_velocity.length2() < 0.1)
+                    this._scroll_velocity.set(0, 0);
+            }
         }
         this._dx = 0;
         this._dy = 0;
@@ -575,7 +597,17 @@ export class MapWidget {
     _isAnyKeyDown(keys) {
         return keys.some((k) => this._keysDown.has(k));
     }
-    /** Eases `rotation` by this many radians (positive = clockwise on screen, matching Mat2D.rotation). Unbounded — rotation can wind up past a full turn; see resetRotation(). */
+    /**
+     * Eases `rotation` by this many radians. Unbounded — rotation can wind up past a full turn;
+     * see resetRotation().
+     *
+     * Sign note (corrected while tracking down ZOOM-3's backwards multitouch-rotate bug — verified
+     * by inspecting the actual gridMatrix `camera.rotation` produces, not just by inference): this
+     * previously claimed "positive = clockwise on screen, matching Mat2D.rotation", which is
+     * backwards. `rotation` is the *camera's* turn relative to the world; camera.worldMatrix.invert()
+     * (what actually places content on screen — see computeTileGridMatrix) applies the *negated*
+     * angle, so increasing `rotation` turns the displayed content COUNTER-clockwise, not clockwise.
+     */
     rotateBy(deltaRadians) {
         this.rotation_target += deltaRadians;
     }
