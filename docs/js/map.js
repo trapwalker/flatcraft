@@ -1030,6 +1030,7 @@ export class MapWidget {
 export class Layer {
     constructor(options) {
         this.name = options && options.name;
+        this.kind = (options && options.kind) || 'cartographic';
         this.shift = (options && options.shift) || new Vector(0, 0);
         this.transform = new Transform2D();
         this.transform.setTranslation(this.shift.x, this.shift.y);
@@ -1062,6 +1063,46 @@ export function computeTileGridMatrix(camera, layerTransform, canvasWidth, canva
         .multiply(layerTransform.worldMatrix)
         .multiply(Mat2D.scaling(world_tile_edge, world_tile_edge));
 }
+// LAYER-6: converts `bounds` (a rect in shared *world* units — see WorldBounds) into the
+// equivalent rect in this layer's tile-*index* space (one unit = one tile — the same space
+// tx/ty/dx/dy and the draw() loop's ix/iy already live in), so draw() can cheaply test each
+// candidate tile index against it. Goes through `layerTransform` (not just `world_tile_edge`)
+// so a layer with its own nonzero shift/scale/rotation (AFF-4) is bounded correctly too, the same
+// way computeTileGridMatrix folds `layerTransform` into tile placement; the four corners of
+// `bounds` are projected through the inverse and re-bounded, mirroring the exact approach
+// getLevelParams already uses for the canvas viewport corners (ROT-3) — necessary in general
+// since a rotated transform turns an axis-aligned world rect into a non-axis-aligned one in
+// index space, so only its bounding box is used here (slightly permissive at the very corners of
+// a rotated bounds under a rotated layer transform — an edge case with no real layer today).
+// DOM-free and exported for the same reason as computeTileGridMatrix — unit-testable independent
+// of any live canvas/browser (see map.test.ts).
+export function computeTileIndexBounds(layerTransform, world_tile_edge, bounds) {
+    const inv = layerTransform.worldMatrix.invert();
+    const corners = [
+        inv.transformPoint({ x: bounds.minX, y: bounds.minY }),
+        inv.transformPoint({ x: bounds.maxX, y: bounds.minY }),
+        inv.transformPoint({ x: bounds.minX, y: bounds.maxY }),
+        inv.transformPoint({ x: bounds.maxX, y: bounds.maxY })
+    ];
+    let minX = corners[0].x, maxX = corners[0].x;
+    let minY = corners[0].y, maxY = corners[0].y;
+    for (let i = 1; i < corners.length; i++) {
+        if (corners[i].x < minX)
+            minX = corners[i].x;
+        if (corners[i].x > maxX)
+            maxX = corners[i].x;
+        if (corners[i].y < minY)
+            minY = corners[i].y;
+        if (corners[i].y > maxY)
+            maxY = corners[i].y;
+    }
+    return {
+        minX: minX / world_tile_edge,
+        minY: minY / world_tile_edge,
+        maxX: maxX / world_tile_edge,
+        maxY: maxY / world_tile_edge
+    };
+}
 export class TiledLayer extends Layer {
     constructor(options) {
         super(options);
@@ -1073,6 +1114,9 @@ export class TiledLayer extends Layer {
         this.tile_size = (options && options.tile_size) || (this.tile_source && this.tile_source.tile_size) || 0;
         this.onTileDraw = options && options.onTileDraw; // function(ix, iy, x, y, tile)
         this.z_max = options && options.z_max;
+        this.zLevelMin = options && options.zLevelMin;
+        this.zLevelMax = options && options.zLevelMax;
+        this.bounds = options && options.bounds;
     }
     getLevelParams(map, w, h) {
         const zf = map.zoom_factor;
@@ -1121,8 +1165,17 @@ export class TiledLayer extends Layer {
         const ty = Math.round((minY + maxY) / 2);
         const dx = Math.ceil((maxX - minX) / 2) + 1;
         const dy = Math.ceil((maxY - minY) / 2) + 1;
+        // LAYER-6: clamp the *final* level (z_max offset already applied) into [zLevelMin, zLevelMax]
+        // when either is set — z_max itself stays the untouched offset it always was (see its own
+        // comment); this only bounds what comes out the other end. Unset (the default) means no
+        // clamping at all, i.e. today's behavior.
+        let level = z + (this.z_max || 0);
+        if (this.zLevelMin !== undefined)
+            level = Math.max(level, this.zLevelMin);
+        if (this.zLevelMax !== undefined)
+            level = Math.min(level, this.zLevelMax);
         return {
-            z: z + (this.z_max || 0),
+            z: level,
             k,
             tile_size,
             world_tile_edge,
@@ -1130,7 +1183,10 @@ export class TiledLayer extends Layer {
             ty,
             dx,
             dy,
-            gridMatrix
+            gridMatrix,
+            // LAYER-6: undefined when `bounds` isn't set — draw() only does the per-tile skip check
+            // when this is present.
+            tileIndexBounds: this.bounds ? computeTileIndexBounds(this.transform, world_tile_edge, this.bounds) : undefined
         };
     }
     draw(map) {
@@ -1145,9 +1201,20 @@ export class TiledLayer extends Layer {
         const dx = level_params.dx;
         const dy = level_params.dy;
         const gridMatrix = level_params.gridMatrix;
+        const tileIndexBounds = level_params.tileIndexBounds;
         this.visible_tile_count = (2 * dx + 1) * (2 * dy + 1);
         for (let y = ty - dy; y <= ty + dy; y++) {
             for (let x = tx - dx; x <= tx + dx; x++) {
+                // LAYER-6: a tile index square is [x, x+1) x [y, y+1) in index space (see
+                // computeTileIndexBounds) — skip it (no tile_source.get(), no draw) if that square falls
+                // entirely outside `bounds`. No-op (tileIndexBounds undefined) when `bounds` isn't set.
+                if (tileIndexBounds &&
+                    (x + 1 <= tileIndexBounds.minX ||
+                        x >= tileIndexBounds.maxX ||
+                        y + 1 <= tileIndexBounds.minY ||
+                        y >= tileIndexBounds.maxY)) {
+                    continue;
+                }
                 const topLeft = gridMatrix.transformPoint({ x, y });
                 this.tileDraw(map, x, y, z, topLeft.x, topLeft.y, tile_size, gridMatrix);
             }

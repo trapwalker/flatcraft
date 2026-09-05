@@ -3,12 +3,16 @@ import { Transform2D } from './transform2d.js';
 import {
   classifyWheelEvent,
   computeTileGridMatrix,
+  computeTileIndexBounds,
   hasCrossedActivationThreshold,
   isDoubleTapContinuation,
   isTap,
+  TiledLayer,
+  type MapWidget,
   type PendingTap,
   type WheelClassifyState
 } from './map.js';
+import { TileSource } from './tile_source.js';
 
 // AFF-4's core safety net: computeTileGridMatrix replaced the old inline
 // `x * tile_size - c.x + w / 2` arithmetic in TiledLayer.draw. This reimplements that old
@@ -305,5 +309,138 @@ describe('hasCrossedActivationThreshold (ZOOM-13)', () => {
     // 6-8-10 triangle: exactly 10px away diagonally, same boundary as the straight case above.
     expect(hasCrossedActivationThreshold({ x: 0, y: 0 }, { x: 6, y: 8 })).toBe(false);
     expect(hasCrossedActivationThreshold({ x: 0, y: 0 }, { x: 6.001, y: 8 })).toBe(true);
+  });
+});
+
+// LAYER-6: Layer.kind (metadata), TiledLayerOptions.zLevelMin/zLevelMax (real clamping of the
+// computed level) and TiledLayerOptions.bounds (real exclusion of out-of-bounds tile indices from
+// the draw loop) — all optional and backward-compatible; a layer that sets none of them must
+// behave exactly as before (see the regression cases below).
+
+// Minimal MapWidget stand-in for getLevelParams()/draw(): both only ever touch zoom_factor,
+// camera and canvas.width/height (draw() also touches ctx, but only when a tile actually has an
+// image — none of the fake tile sources below ever hand back one, so a bare object is enough).
+function fakeMap(position: XY, zf: number, width: number, height: number): MapWidget {
+  const camera = new Transform2D();
+  camera.setTranslation(position.x, position.y);
+  camera.setScale(1 / zf);
+  return {
+    camera,
+    zoom_factor: zf,
+    canvas: { width, height },
+    ctx: {}
+  } as unknown as MapWidget;
+}
+
+describe('TiledLayer.getLevelParams — zLevelMin/zLevelMax clamping (LAYER-6)', () => {
+  it('leaves the computed level untouched when neither bound is set (regression)', () => {
+    const layer = new TiledLayer({ tile_size: 256, z_max: 3 });
+    const map = fakeMap({ x: 0, y: 0 }, 1024, 100, 100); // zoom_factor=2^10 -> z=10
+    const params = layer.getLevelParams(map, 100, 100);
+    expect(params.z).toBe(10 + 3); // unclamped: z + z_max, exactly like before this ticket
+  });
+
+  it('zLevelMin raises a computed level that falls below it', () => {
+    const layer = new TiledLayer({ tile_size: 256, zLevelMin: 5 });
+    const map = fakeMap({ x: 0, y: 0 }, 1, 100, 100); // zoom_factor=1 -> z=0, well under zLevelMin
+    const params = layer.getLevelParams(map, 100, 100);
+    expect(params.z).toBe(5);
+  });
+
+  it('zLevelMax lowers a computed level that exceeds it', () => {
+    const layer = new TiledLayer({ tile_size: 256, zLevelMax: 6 });
+    const map = fakeMap({ x: 0, y: 0 }, 1024, 100, 100); // zoom_factor=2^10 -> z=10, well over zLevelMax
+    const params = layer.getLevelParams(map, 100, 100);
+    expect(params.z).toBe(6);
+  });
+
+  it('clamps AFTER the existing z_max offset is applied, without changing z_max itself', () => {
+    const layer = new TiledLayer({ tile_size: 256, z_max: 2, zLevelMax: 11 });
+    const map = fakeMap({ x: 0, y: 0 }, 1024, 100, 100); // z=10, +z_max(2) = 12, clamp to 11
+    const params = layer.getLevelParams(map, 100, 100);
+    expect(params.z).toBe(11);
+  });
+
+  it("doesn't clamp a level already within [zLevelMin, zLevelMax]", () => {
+    const layer = new TiledLayer({ tile_size: 256, zLevelMin: 5, zLevelMax: 15 });
+    const map = fakeMap({ x: 0, y: 0 }, 1024, 100, 100); // z=10, well inside [5,15]
+    const params = layer.getLevelParams(map, 100, 100);
+    expect(params.z).toBe(10);
+  });
+});
+
+describe('computeTileIndexBounds (LAYER-6)', () => {
+  it('converts a world-space rect into tile-index space via world_tile_edge, for an identity layer transform', () => {
+    const identity = new Transform2D();
+    const bounds = computeTileIndexBounds(identity, 100, { minX: 0, minY: 0, maxX: 300, maxY: 500 });
+    expect(bounds).toEqual({ minX: 0, minY: 0, maxX: 3, maxY: 5 });
+  });
+
+  it('accounts for a nonzero layer shift, the same way computeTileGridMatrix does for tile placement', () => {
+    const shifted = new Transform2D();
+    shifted.setTranslation(100, 100);
+    // world bounds [100,400) — shift by (100,100) — should land at index [0,3) once shift is undone.
+    const bounds = computeTileIndexBounds(shifted, 100, { minX: 100, minY: 100, maxX: 400, maxY: 400 });
+    expect(bounds).toEqual({ minX: 0, minY: 0, maxX: 3, maxY: 3 });
+  });
+});
+
+describe('TiledLayer.draw — bounds excludes out-of-bounds tile indices (LAYER-6)', () => {
+  // world_tile_edge works out to exactly `tile_size` here (zoom_factor=1 -> z=0 -> k=1, and
+  // world_tile_edge = tile_size / 2^z = tile_size), so bounds in world units divide cleanly into
+  // tile-index bounds — see computeTileIndexBounds's own tests above for the general case.
+  const TILE_SIZE = 100;
+
+  function trackingSource(): { source: TileSource; calls: Array<[number, number]> } {
+    const calls: Array<[number, number]> = [];
+    const source = new TileSource({
+      tile_size: TILE_SIZE,
+      onGet: (x, y) => { calls.push([x, y]); return null; } // no image -> tileDraw never touches ctx
+    });
+    return { source, calls };
+  }
+
+  it('never requests a tile whose index square falls entirely outside `bounds`', () => {
+    const { source, calls } = trackingSource();
+    const layer = new TiledLayer({
+      tile_source: source,
+      tile_size: TILE_SIZE,
+      bounds: { minX: 0, minY: 0, maxX: 300, maxY: 300 } // tile-index [0,3) x [0,3)
+    });
+    // A big canvas relative to the tile size, centered inside `bounds`, so the ordinary visible
+    // range comfortably extends past [0,3) x [0,3) in every direction — otherwise this test would
+    // pass vacuously (nothing out-of-bounds was ever a candidate in the first place).
+    const map = fakeMap({ x: 150, y: 150 }, 1, 1000, 1000);
+
+    layer.draw(map);
+
+    expect(calls.length).toBeGreaterThan(0);
+    for (const [x, y] of calls) {
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThan(3);
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(y).toBeLessThan(3);
+    }
+    // Every in-bounds index should actually have been requested (nothing over-excluded either).
+    const seen = new Set(calls.map(([x, y]) => `${x}:${y}`));
+    for (let x = 0; x < 3; x++) {
+      for (let y = 0; y < 3; y++) {
+        expect(seen.has(`${x}:${y}`)).toBe(true);
+      }
+    }
+  });
+
+  it('requests every visible tile, in and out of what would be `bounds`, when `bounds` is unset (regression)', () => {
+    const { source, calls } = trackingSource();
+    const layer = new TiledLayer({ tile_source: source, tile_size: TILE_SIZE }); // no bounds
+    const map = fakeMap({ x: 150, y: 150 }, 1, 1000, 1000);
+
+    layer.draw(map);
+
+    const params = layer.getLevelParams(map, 1000, 1000);
+    expect(calls.length).toBe((2 * params.dx + 1) * (2 * params.dy + 1));
+    // Confirms the visible range genuinely reaches outside [0,3) x [0,3) — same range as the
+    // bounded test above — so that test's exclusions are real, not vacuous.
+    expect(calls.some(([x, y]) => x < 0 || x >= 3 || y < 0 || y >= 3)).toBe(true);
   });
 });

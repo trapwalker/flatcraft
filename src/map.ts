@@ -1321,11 +1321,20 @@ export interface LayerOptions {
   color?: string;
   textColor?: string;
   frameColor?: string;
+  // LAYER-6: see Layer.kind's own doc comment. Optional, defaults to 'cartographic' — existing
+  // layer configs don't need to set this.
+  kind?: 'cartographic' | 'local';
   [key: string]: unknown;
 }
 
 export class Layer {
   name?: string;
+  // LAYER-6: metadata only for MVP — no runtime enforcement/gating in core rendering. Lets the
+  // demo layer panel (DEMO-1) and future LAYER-1 layer manager group base layers by kind (e.g.
+  // separate radio-groups for "map-like" vs. "arbitrary" backgrounds) instead of one flat list.
+  // Defaults to 'cartographic' so every existing layer config (none of which sets this) keeps
+  // behaving exactly as before.
+  kind: 'cartographic' | 'local';
   shift: Vector;
   // AFF-4: this layer's own coordinate system, independent of (not parented to) `map.camera` —
   // see BACKLOG.md's AFF-4 note on why literally parenting it to camera doesn't compose: camera's
@@ -1343,6 +1352,7 @@ export class Layer {
 
   constructor(options?: LayerOptions) {
     this.name = options && options.name;
+    this.kind = (options && options.kind) || 'cartographic';
     this.shift = (options && options.shift) || new Vector(0, 0);
     this.transform = new Transform2D();
     this.transform.setTranslation(this.shift.x, this.shift.y);
@@ -1361,6 +1371,19 @@ export class Layer {
 }
 
 /// TiledLayer ////////////////////////////////////////////////////////////////////////////////////
+// LAYER-6: the actual real-data extent of a tile source, in shared *world* units (the same units
+// as `map.c`/`Vector` — NOT lon/lat; there's no PROJ-* yet to convert). Deliberately a separate,
+// differently-named type from the existing `z_max` field just below (which, despite its name, is
+// a z-*offset* applied to every layer, not a limit — see the many `// todo: rename to z_deep`
+// comments already in this file) — see TiledLayerOptions.bounds/zLevelMin/zLevelMax's own
+// comments for why `z_max` is deliberately left untouched here.
+export interface WorldBounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
 export interface TiledLayerOptions extends LayerOptions {
   tile_source?: TileSource;
   tile_size?: number;
@@ -1383,7 +1406,21 @@ export interface TiledLayerOptions extends LayerOptions {
     // working unchanged.
     gridMatrix?: Mat2D
   ) => void; // function(ix, iy, x, y, tile, gridMatrix)
+  // LAYER-6: intentionally NOT touched/renamed/reinterpreted — see WorldBounds's comment above.
   z_max?: number;
+  // LAYER-6: the real pyramid-depth range this tile source has data for. Optional — unset means
+  // today's behavior (the computed level tracks zoom_factor unclamped). When set,
+  // getLevelParams()/draw() clamp the *final* level (after the z_max offset above is applied) into
+  // this range, so a source that has, say, no tiles deeper than z=18 stops requesting/drawing
+  // levels past that instead of asking for tiles that don't exist.
+  zLevelMin?: number;
+  zLevelMax?: number;
+  // LAYER-6: real-data extent in world units — see WorldBounds. Optional — unset means today's
+  // behavior (tiles are requested/drawn across the whole visible index range with no cutoff).
+  // When set, draw() skips (does not call tile_source.get() for, does not draw) any tile whose
+  // index square falls entirely outside it — useful for a source that only covers a finite region
+  // of the world (e.g. XKCD's comic) or any future regional dataset.
+  bounds?: WorldBounds;
 }
 
 export interface LevelParams {
@@ -1398,6 +1435,10 @@ export interface LevelParams {
   // ROT-3: computed once here (needs the canvas corners projected through it — see below) and
   // reused by draw() for the actual per-tile placement, instead of building it twice.
   gridMatrix: Mat2D;
+  // LAYER-6: this layer's `bounds` (world units) converted into tile-*index* space, ready for
+  // draw()'s per-tile skip check below — undefined when the layer has no `bounds` set (today's
+  // unbounded behavior).
+  tileIndexBounds?: WorldBounds;
 }
 
 // AFF-4: the combined matrix mapping a tile's *index* (integer ix/iy, one unit = one tile) to
@@ -1422,11 +1463,57 @@ export function computeTileGridMatrix(
     .multiply(Mat2D.scaling(world_tile_edge, world_tile_edge));
 }
 
+// LAYER-6: converts `bounds` (a rect in shared *world* units — see WorldBounds) into the
+// equivalent rect in this layer's tile-*index* space (one unit = one tile — the same space
+// tx/ty/dx/dy and the draw() loop's ix/iy already live in), so draw() can cheaply test each
+// candidate tile index against it. Goes through `layerTransform` (not just `world_tile_edge`)
+// so a layer with its own nonzero shift/scale/rotation (AFF-4) is bounded correctly too, the same
+// way computeTileGridMatrix folds `layerTransform` into tile placement; the four corners of
+// `bounds` are projected through the inverse and re-bounded, mirroring the exact approach
+// getLevelParams already uses for the canvas viewport corners (ROT-3) — necessary in general
+// since a rotated transform turns an axis-aligned world rect into a non-axis-aligned one in
+// index space, so only its bounding box is used here (slightly permissive at the very corners of
+// a rotated bounds under a rotated layer transform — an edge case with no real layer today).
+// DOM-free and exported for the same reason as computeTileGridMatrix — unit-testable independent
+// of any live canvas/browser (see map.test.ts).
+export function computeTileIndexBounds(
+  layerTransform: Transform2D,
+  world_tile_edge: number,
+  bounds: WorldBounds
+): WorldBounds {
+  const inv = layerTransform.worldMatrix.invert();
+  const corners = [
+    inv.transformPoint({ x: bounds.minX, y: bounds.minY }),
+    inv.transformPoint({ x: bounds.maxX, y: bounds.minY }),
+    inv.transformPoint({ x: bounds.minX, y: bounds.maxY }),
+    inv.transformPoint({ x: bounds.maxX, y: bounds.maxY })
+  ];
+  let minX = corners[0].x, maxX = corners[0].x;
+  let minY = corners[0].y, maxY = corners[0].y;
+  for (let i = 1; i < corners.length; i++) {
+    if (corners[i].x < minX) minX = corners[i].x;
+    if (corners[i].x > maxX) maxX = corners[i].x;
+    if (corners[i].y < minY) minY = corners[i].y;
+    if (corners[i].y > maxY) maxY = corners[i].y;
+  }
+  return {
+    minX: minX / world_tile_edge,
+    minY: minY / world_tile_edge,
+    maxX: maxX / world_tile_edge,
+    maxY: maxY / world_tile_edge
+  };
+}
+
 export class TiledLayer extends Layer {
   tile_source?: TileSource;
   tile_size: number;
   onTileDraw?: TiledLayerOptions['onTileDraw'];
+  // LAYER-6: intentionally NOT touched/renamed/reinterpreted — see WorldBounds's comment above.
   z_max?: number;
+  // LAYER-6: see TiledLayerOptions' own comments.
+  zLevelMin?: number;
+  zLevelMax?: number;
+  bounds?: WorldBounds;
   // Debug-overlay support: how many tile slots this layer's draw() considered this frame
   // ((2*dx+1)*(2*dy+1)) — not how many actually have an image yet, just the size of the
   // currently-visible index range. Updated at the top of every draw() call.
@@ -1438,6 +1525,9 @@ export class TiledLayer extends Layer {
     this.tile_size = (options && options.tile_size) || (this.tile_source && this.tile_source.tile_size) || 0;
     this.onTileDraw = options && options.onTileDraw; // function(ix, iy, x, y, tile)
     this.z_max = options && options.z_max;
+    this.zLevelMin = options && options.zLevelMin;
+    this.zLevelMax = options && options.zLevelMax;
+    this.bounds = options && options.bounds;
   }
 
   getLevelParams(map: MapWidget, w: number, h: number): LevelParams {
@@ -1486,8 +1576,16 @@ export class TiledLayer extends Layer {
     const dx = Math.ceil((maxX - minX) / 2) + 1;
     const dy = Math.ceil((maxY - minY) / 2) + 1;
 
+    // LAYER-6: clamp the *final* level (z_max offset already applied) into [zLevelMin, zLevelMax]
+    // when either is set — z_max itself stays the untouched offset it always was (see its own
+    // comment); this only bounds what comes out the other end. Unset (the default) means no
+    // clamping at all, i.e. today's behavior.
+    let level = z + (this.z_max || 0);
+    if (this.zLevelMin !== undefined) level = Math.max(level, this.zLevelMin);
+    if (this.zLevelMax !== undefined) level = Math.min(level, this.zLevelMax);
+
     return {
-      z: z + (this.z_max || 0),
+      z: level,
       k,
       tile_size,
       world_tile_edge,
@@ -1495,7 +1593,10 @@ export class TiledLayer extends Layer {
       ty,
       dx,
       dy,
-      gridMatrix
+      gridMatrix,
+      // LAYER-6: undefined when `bounds` isn't set — draw() only does the per-tile skip check
+      // when this is present.
+      tileIndexBounds: this.bounds ? computeTileIndexBounds(this.transform, world_tile_edge, this.bounds) : undefined
     };
   }
 
@@ -1512,10 +1613,23 @@ export class TiledLayer extends Layer {
     const dx = level_params.dx;
     const dy = level_params.dy;
     const gridMatrix = level_params.gridMatrix;
+    const tileIndexBounds = level_params.tileIndexBounds;
     this.visible_tile_count = (2 * dx + 1) * (2 * dy + 1);
 
     for (let y = ty - dy; y <= ty + dy; y++) {
       for (let x = tx - dx; x <= tx + dx; x++) {
+        // LAYER-6: a tile index square is [x, x+1) x [y, y+1) in index space (see
+        // computeTileIndexBounds) — skip it (no tile_source.get(), no draw) if that square falls
+        // entirely outside `bounds`. No-op (tileIndexBounds undefined) when `bounds` isn't set.
+        if (
+          tileIndexBounds &&
+          (x + 1 <= tileIndexBounds.minX ||
+            x >= tileIndexBounds.maxX ||
+            y + 1 <= tileIndexBounds.minY ||
+            y >= tileIndexBounds.maxY)
+        ) {
+          continue;
+        }
         const topLeft = gridMatrix.transformPoint({ x, y });
         this.tileDraw(map, x, y, z, topLeft.x, topLeft.y, tile_size, gridMatrix);
       }
