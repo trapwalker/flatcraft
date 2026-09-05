@@ -1,6 +1,6 @@
 import { Vector } from './vector.js';
 import { MapWidget } from './map.js';
-import { LAYERS, ALL_LAYERS } from './layers.js';
+import { LAYERS, ALL_LAYERS, ATTRIBUTIONS, MANDELBROT_TILE_SIZE, MANDELBROT_Z_MAX, MANDELBROT_BASE_Z } from './layers.js';
 const locations = {
     bel: {
         pos: new Vector(40373076, 22579095),
@@ -31,6 +31,22 @@ const locations = {
         caption: 'Zero point',
         go: function () {
             map.locate(this.pos);
+        }
+    },
+    mandelbrot: {
+        // DEMO-4: the world position that keeps the classic "whole set" view centered at every zoom
+        // level (not just at MANDELBROT_BASE_Z) — tile-index addressing puts a layer's tile (0,0) at
+        // world position (0,0) *at every zoom*, so world (0,0) only shows the base rectangle's
+        // top-left corner once you're past the base zoom, not its recognizable center. Centering on
+        // the rectangle's actual midpoint (real=-0.5, im=0, the fraction (0.5, 0.5) of the base
+        // rectangle) instead needs world position (tile_size/2) * 2^(z_max - base_z) on each axis —
+        // same derivation a real map's "center tile" position would need, just solved for this
+        // layer's own z_max/base_z instead of a real geo pyramid's.
+        pos: new Vector((MANDELBROT_TILE_SIZE / 2) * Math.pow(2, MANDELBROT_Z_MAX - MANDELBROT_BASE_Z), (MANDELBROT_TILE_SIZE / 2) * Math.pow(2, MANDELBROT_Z_MAX - MANDELBROT_BASE_Z)),
+        caption: 'Mandelbrot center', // distinct from the "Mandelbrot set" layer checkbox's own label
+        go: function () {
+            map.locate(this.pos);
+            LAYERS.mandelbrot_tiles.visible = true;
         }
     }
 };
@@ -76,10 +92,47 @@ let map;
         gui_scroll.add(map, 'scrollType', ['simple', 'inertial', 'sliding']).name('Type of Scroll').listen();
         gui_scroll.add(map, 'inertion_value', 0, 0.2).step(0.001).name('Inertion Reduction').listen();
         gui_scroll.add(map, 'sliding_value', 0, 1).step(0.01).name('Sliding Value').listen();
+        // DEMO-1: base layers ("the background map" — substitutable, only one visible at a time,
+        // same convention any layered-map UI uses) vs. independent overlay checkboxes. dat.GUI has no
+        // native radio-group control for an arbitrary set of objects, so this is the established
+        // idiom instead: a synthetic "active base layer" string bound to a dropdown/listbox
+        // controller (`gui.add(obj, prop, arrayOfChoices)`), fanned out to each base layer's
+        // `.visible` in onChange.
         const gui_layers = gui.addFolder('Layers');
         gui_layers.closed = false;
-        for (let i = 0; i < map.layers.length; i++) {
-            gui_layers.add(map.layers[i], 'visible').name(map.layers[i].name).listen();
+        const baseLayers = {
+            'Map tiles back': LAYERS.map_tiles_back,
+            'Map tiles front': LAYERS.map_tiles_front,
+            'Map tiles (mixed)': LAYERS.map_tiles,
+            'XKCD tiles': LAYERS.xkcd_tiles,
+            // DEMO-2's three new no-key sources, folded in here per DEMO_BACKLOG.md.
+            CyclOSM: LAYERS.map_tiles_cyclosm,
+            OpenTopoMap: LAYERS.map_tiles_opentopo,
+            'ESRI World Imagery': LAYERS.map_tiles_esri
+        };
+        const baseLayerNames = Object.keys(baseLayers);
+        const initialBaseLayerName = baseLayerNames.find((name) => baseLayers[name].visible) || baseLayerNames[0];
+        // Enforce exclusivity up front too, in case more than one (or none) happened to default to
+        // visible — the dropdown and the layers' actual state must never disagree.
+        for (const name of baseLayerNames)
+            baseLayers[name].visible = name === initialBaseLayerName;
+        const baseLayerControl = { active: initialBaseLayerName };
+        gui_layers.add(baseLayerControl, 'active', baseLayerNames).name('Base map').onChange((value) => {
+            for (const name of baseLayerNames)
+                baseLayers[name].visible = name === value;
+        });
+        // Overlays: independent, non-exclusive checkboxes — same flat `.visible` binding the old code
+        // used for every layer, just no longer including the base layers above.
+        const overlayLayers = {
+            'Strava heat map': LAYERS.map_tiles_strava,
+            'Map grid': LAYERS.map_grid,
+            'Map tiles debug': LAYERS.map_debug,
+            'XKCD tiles debug': LAYERS.xkcd_debug,
+            'Mandelbrot set': LAYERS.mandelbrot_tiles, // DEMO-4 — standalone, not a base layer
+            'Debug data': LAYERS.debug
+        };
+        for (const name in overlayLayers) {
+            gui_layers.add(overlayLayers[name], 'visible').name(name).listen();
         }
         const gui_locations = gui.addFolder('Locations');
         gui_locations.closed = false;
@@ -88,6 +141,41 @@ let map;
             gui_locations.add(location, 'go').name(location.caption);
         }
         gui.close();
+        // DEMO-6: demo-local hotkeys for demo-only layers the core (`MapWidget`, src/map.ts) doesn't
+        // know by name — a separate `document.addEventListener('keydown', ...)` here rather than
+        // touching that file (multiple `keydown` listeners on `document` coexist fine). Same "don't
+        // steal keystrokes meant for a text field" guard as MapWidget's own listener (src/map.ts) —
+        // otherwise typing into a dat.GUI number field would trip these.
+        //
+        //   - KeyI: toggle LAYERS.debug.visible (the fps/pos/tile-stats debug-info overlay).
+        //   - KeyT: toggle map_grid/map_debug/xkcd_debug's `.visible` together, as ONE combined
+        //     "tile debug overlay" state (a single press flips all three at once — the request asked
+        //     for "grid and tile debug info" as one logical toggle, not three separate ones).
+        //
+        // A "reset rotation to 0" hotkey already exists in core (`Home` — MapWidget.resetRotationKeys)
+        // — deliberately not duplicated here.
+        document.addEventListener('keydown', (e) => {
+            const target = e.target;
+            if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
+                return;
+            if (e.code === 'KeyI') {
+                LAYERS.debug.visible = !LAYERS.debug.visible;
+            }
+            else if (e.code === 'KeyT') {
+                const next = !LAYERS.map_grid.visible;
+                LAYERS.map_grid.visible = next;
+                LAYERS.map_debug.visible = next;
+                LAYERS.xkcd_debug.visible = next;
+            }
+        });
+        // DEMO-3 (minimal slice): visible attribution text for every base layer whose ToU requires it
+        // (OSM/CyclOSM/OpenTopoMap/ESRI). Populated from `ATTRIBUTIONS` (src/layers.ts, defined once
+        // next to the layers themselves) into a plain block in docs/index.html — not meant to be
+        // pretty, just present before this demo page is ever linked to anyone outside the project.
+        const attributionEl = document.getElementById('attribution');
+        if (attributionEl) {
+            attributionEl.textContent = Object.values(ATTRIBUTIONS).join(' | ');
+        }
     }
     init();
 })();

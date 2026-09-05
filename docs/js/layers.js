@@ -17,11 +17,9 @@ const tsBack = new XYZTileSource({
     tile_size: 256,
     urlTemplate: (x, y, z) => `http://roaddogs.ru/map/back/${z}/${x}/${y}${TILE_EXT}`
 });
+// DEMO-1: `tsFront` and the old `tsOSM` were the exact same OSM URL declared twice — consolidated
+// to this one source, used by the "Map tiles front" layer.
 const tsFront = new XYZTileSource({
-    tile_size: 256,
-    urlTemplate: (x, y, z) => `https://a.tile.openstreetmap.org/${z}/${x}/${y}${TILE_EXT}`
-});
-const tsOSM = new XYZTileSource({
     tile_size: 256,
     urlTemplate: (x, y, z) => `https://a.tile.openstreetmap.org/${z}/${x}/${y}${TILE_EXT}`
 });
@@ -29,6 +27,60 @@ const tsStrava = new XYZTileSource({
     tile_size: 512,
     urlTemplate: (x, y, z) => `https://heatmap-external-a.strava.com/tiles/all/hot/${z}/${x}/${y}.png`
 });
+// DEMO-2: standard slippy-map `{s}` subdomain rotation (a/b/c) — the new public sources below all
+// publish three round-robin subdomains the same way OSM itself does, spreading load and
+// sidestepping the browser's per-host connection cap. There's no live `{s}` placeholder to
+// substitute into here (urlTemplate is a plain `(x, y, z) => string` function, not a string
+// template — see XYZTileSourceOptions in tile_source.ts), so this rotates through the three
+// letters by hashing the tile index instead: deterministic per tile (repeated requests for the
+// same tile hit the same subdomain, which is friendlier to that subdomain's own cache) and cheap.
+const SUBDOMAINS = ['a', 'b', 'c'];
+// Exported for layers.test.ts — a small pure function with a real, easy-to-reintroduce bug (see
+// its own comment below), worth locking down directly.
+export function subdomain(x, y) {
+    // Tile indices are frequently negative (world position can be negative on either axis — see
+    // e.g. the `zero` location) — JS's `%` is a remainder, not a true modulo, and stays negative for
+    // a negative left-hand side (e.g. -1 % 3 === -1, not 2), which would index SUBDOMAINS with -1
+    // and silently return `undefined` (a real bug this normalizes away: `undefined.tile-...` is not
+    // a valid hostname). The extra `+ SUBDOMAINS.length` before the final `%` folds any negative
+    // remainder back into range.
+    return SUBDOMAINS[((x + y) % SUBDOMAINS.length + SUBDOMAINS.length) % SUBDOMAINS.length];
+}
+// DEMO-2: three new no-key, ToU-safe base layers (see DEMO_BACKLOG.md's nakarte survey) —
+// CyclOSM and OpenTopoMap are plain XYZTileSource with `{s}` rotation like OSM itself; ESRI World
+// Imagery needs its own subclass below for its non-standard URL axis order.
+const tsCyclOsm = new XYZTileSource({
+    tile_size: 256,
+    urlTemplate: (x, y, z) => `https://${subdomain(x, y)}.tile-cyclosm.openstreetmap.fr/cyclosm/${z}/${x}/${y}${TILE_EXT}`
+});
+const tsOpenTopoMap = new XYZTileSource({
+    tile_size: 256,
+    urlTemplate: (x, y, z) => `https://${subdomain(x, y)}.tile.opentopomap.org/${z}/${x}/${y}${TILE_EXT}`
+});
+// ESRI publishes `{z}/{y}/{x}` — axis order swapped vs. the usual `{z}/{x}/{y}` every other source
+// here uses, NOT TMS's flipped-Y-origin convention (TMSTileSource, tile_source.ts); a different
+// kind of non-standard URL. Reuses the exact same "override the protected buildUrl, delegate to
+// super.buildUrl" mechanism TMSTileSource itself uses for its own remap — swap x/y before
+// delegating, so urlTemplate can stay an ordinary `(x, y, z) => .../${z}/${x}/${y}` template like
+// every other source in this file, instead of hand-rolling a one-off URL builder.
+class EsriWorldImagerySource extends XYZTileSource {
+    buildUrl(x, y, z) {
+        return super.buildUrl(y, x, z);
+    }
+}
+const tsEsriWorldImagery = new EsriWorldImagerySource({
+    tile_size: 256,
+    urlTemplate: (x, y, z) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${x}/${y}`
+});
+// DEMO-3 (minimal slice): one attribution string per new/existing base layer, per each source's
+// ToU. Rendered as a plain, unstyled block near the layer panel — see index.ts — not meant to be
+// pretty, just present before this demo page is ever linked to anyone outside the project.
+export const ATTRIBUTIONS = {
+    'Map tiles front': '© OpenStreetMap contributors',
+    CyclOSM: 'Map style: © CyclOSM (CC-BY-SA) | Map data: © OpenStreetMap contributors',
+    OpenTopoMap: 'Map style: © OpenTopoMap (CC-BY-SA) | Map data: © OpenStreetMap contributors',
+    'ESRI World Imagery': 'Imagery: © Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+};
 // ROT-4 (debug layers): was broken the same way map_grid was — an axis-aligned ctx.rect(x, y,
 // tsize, tsize) (plus a second, smaller "shrunk" rect inside it) at the tile's precomputed
 // top-left corner, so the frame's *position* tracked the rotated camera but its *shape* never
@@ -134,6 +186,116 @@ function drawDebugInfo(map) {
     ctx.fillText('prefetch=' + tsFront.prefetch_queued_count
         + ' pending=' + tsFront.load_queue.length, x, h - 80);
 }
+/// Mandelbrot (DEMO-4) ///////////////////////////////////////////////////////////////////////////
+// A `StaticCanvasTileSource` layer, same base class/pattern as `xkcd_tiles` above, but one that
+// genuinely uses `z`: xkcd's `onGet` ignores it entirely (a fixed-depth data tree, keyed on x/y
+// alone), while a fractal has infinite detail, so each zoom level needs its own, differently
+// scaled rectangle of the complex plane — the same relationship a real slippy-map tile's lon/lat
+// rectangle has to its x/y/z (halving in each axis per zoom level).
+// The base view (tile x=0, y=0 at MANDELBROT_BASE_Z) — the classic framing of the whole set, real
+// axis roughly [-2, 1], imaginary roughly [-1.5, 1.5] (width == height == 3, matching the square
+// tile so the fractal isn't stretched).
+export const MANDELBROT_RE_MIN = -2;
+export const MANDELBROT_RE_MAX = 1;
+export const MANDELBROT_IM_MIN = -1.5;
+export const MANDELBROT_IM_MAX = 1.5;
+export const MANDELBROT_BASE_Z = 0;
+export const MANDELBROT_TILE_SIZE = 256;
+export const MANDELBROT_MAX_ITER = 200;
+// See the mandelbrot_tiles layer definition below for what this picks and why.
+export const MANDELBROT_Z_MAX = 8;
+// Standalone and DOM-free specifically so it's unit-testable (see layers.test.ts) independent of
+// canvas/StaticCanvasTileSource. `x`/`y` follow the same tile-index convention TiledLayer already
+// uses everywhere else (y increasing downward, like screen rows/slippy-map tiles) — so y maps to
+// *decreasing* imaginary part, same sense a real map's y maps to decreasing latitude.
+export function mandelbrotTileRect(x, y, z) {
+    const tilesPerAxis = Math.pow(2, z - MANDELBROT_BASE_Z);
+    const width = (MANDELBROT_RE_MAX - MANDELBROT_RE_MIN) / tilesPerAxis;
+    const height = (MANDELBROT_IM_MAX - MANDELBROT_IM_MIN) / tilesPerAxis;
+    const reMin = MANDELBROT_RE_MIN + x * width;
+    const imMax = MANDELBROT_IM_MAX - y * height;
+    return { reMin, reMax: reMin + width, imMin: imMax - height, imMax };
+}
+// Standard escape-time count for c = (cre, cim): iterations of z -> z^2 + c until |z| > 2 (escape,
+// definitely outside the set) or maxIter is reached (treated as "inside" — the coloring below
+// paints that case black). Pure and cheap enough to unit-test directly (see layers.test.ts).
+export function mandelbrotEscapeIterations(cre, cim, maxIter) {
+    let zre = 0;
+    let zim = 0;
+    let iter = 0;
+    while (zre * zre + zim * zim <= 4 && iter < maxIter) {
+        const nextRe = zre * zre - zim * zim + cre;
+        zim = 2 * zre * zim + cim;
+        zre = nextRe;
+        iter++;
+    }
+    return iter;
+}
+// Cheap iteration-count -> hue gradient (HSL, full saturation/mid lightness), converted to RGB by
+// hand rather than via canvas's `hsl()` fillStyle parsing — this runs once per pixel (tens of
+// thousands of times per tile), so building/parsing a CSS color string that often is wasteful
+// compared to computing bytes directly. Points still inside the set at maxIter come out black.
+function hueToRgb(hue) {
+    const h = hue / 60;
+    const x = 1 - Math.abs((h % 2) - 1);
+    let r = 0, g = 0, b = 0;
+    if (h < 1) {
+        r = 1;
+        g = x;
+    }
+    else if (h < 2) {
+        r = x;
+        g = 1;
+    }
+    else if (h < 3) {
+        g = 1;
+        b = x;
+    }
+    else if (h < 4) {
+        g = x;
+        b = 1;
+    }
+    else if (h < 5) {
+        r = x;
+        b = 1;
+    }
+    else {
+        r = 1;
+        b = x;
+    }
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+}
+function drawMandelbrotTile(getCtx, x, y, z) {
+    const rect = mandelbrotTileRect(x, y, z);
+    const size = MANDELBROT_TILE_SIZE;
+    const ctx = getCtx();
+    const imageData = ctx.createImageData(size, size);
+    const data = imageData.data;
+    const reSpan = rect.reMax - rect.reMin;
+    const imSpan = rect.imMax - rect.imMin;
+    for (let py = 0; py < size; py++) {
+        const cim = rect.imMax - (py / size) * imSpan;
+        for (let px = 0; px < size; px++) {
+            const cre = rect.reMin + (px / size) * reSpan;
+            const iter = mandelbrotEscapeIterations(cre, cim, MANDELBROT_MAX_ITER);
+            const idx = (py * size + px) * 4;
+            if (iter >= MANDELBROT_MAX_ITER) {
+                data[idx] = 0;
+                data[idx + 1] = 0;
+                data[idx + 2] = 0;
+            }
+            else {
+                const [r, g, b] = hueToRgb((360 * iter) / MANDELBROT_MAX_ITER);
+                data[idx] = r;
+                data[idx + 1] = g;
+                data[idx + 2] = b;
+            }
+            data[idx + 3] = 255;
+        }
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return true; // the set is defined everywhere — unlike xkcd, there's no sparse "no data" case
+}
 export const LAYERS = {
     background: new Layer({
         name: 'Background',
@@ -183,6 +345,31 @@ export const LAYERS = {
     map_tiles: new TiledLayer({
         name: 'Map tiles (mixed)',
         tile_source: tsMerged,
+        visible: false,
+        z_max: 18 // todo: rename to z_deep
+    }),
+    // DEMO-2: three new no-key base layers, folded into DEMO-1's base-layer radio group in index.ts
+    // alongside map_tiles_back/map_tiles_front/map_tiles/xkcd_tiles.
+    map_tiles_cyclosm: new TiledLayer({
+        name: 'CyclOSM',
+        tile_source: tsCyclOsm,
+        visible: false,
+        z_max: 18 // todo: rename to z_deep
+    }),
+    map_tiles_opentopo: new TiledLayer({
+        name: 'OpenTopoMap',
+        tile_source: tsOpenTopoMap,
+        visible: false,
+        // OpenTopoMap's own tile pyramid stops at z=17 (one shallower than OSM/CyclOSM's 18) — past
+        // that its server returns a 200 "max zoom layer = 17" placeholder image rather than a real
+        // tile or a 404 (confirmed via Playwright). z_max: 17 keeps this layer's deepest reachable
+        // level matched to what the source actually serves, instead of always hitting the placeholder
+        // at the widget's own maximum zoom.
+        z_max: 17
+    }),
+    map_tiles_esri: new TiledLayer({
+        name: 'ESRI World Imagery',
+        tile_source: tsEsriWorldImagery,
         visible: false,
         z_max: 18 // todo: rename to z_deep
     }),
@@ -278,6 +465,30 @@ export const LAYERS = {
             ctx.stroke();
         }
     }),
+    // DEMO-4: an independent overlay, not part of the base-layer radio group — it doesn't represent
+    // "the real map", so forcing mutual exclusion with the actual base layers would be misleading.
+    //
+    // z_max picks where MANDELBROT_BASE_Z (the whole-set overview) sits within the widget's zoom
+    // range: TiledLayer.getLevelParams adds z_max to a "raw" z that's 0 at the widget's own maximum
+    // zoom (zoom_target === map.zoom_max) and more negative the further zoomed out (down to
+    // -(zoom_level_max - zoom_level_min) at zoom_target === map.zoom_min) — see map.ts's
+    // getLevelParams/zoom_min. z_max: 18 (what every real tile layer above uses) would put the
+    // whole-set view *above* the top of the reachable range entirely (never visible via the normal
+    // zoom UI, always some deep, likely-blank fragment); z_max: 0 puts it exactly *at* the top
+    // (visible, but leaves no headroom to zoom in any further for real detail). MANDELBROT_Z_MAX: 8
+    // instead leaves genuine room on both sides: the classic whole-set overview sits at a
+    // middle-ish zoom setting, zooming in from there reaches up to 2^8 = 256x past it (real,
+    // growing fractal detail — the actual point of this layer), and zooming out shrinks it into the
+    // background, same as a real fractal viewer would.
+    mandelbrot_tiles: new TiledLayer({
+        name: 'Mandelbrot set',
+        tile_source: new StaticCanvasTileSource({
+            tile_size: MANDELBROT_TILE_SIZE,
+            drawTile: drawMandelbrotTile
+        }),
+        visible: false,
+        z_max: MANDELBROT_Z_MAX
+    }),
     debug: new Layer({
         name: 'Debug data',
         color: 'red',
@@ -290,11 +501,15 @@ export const ALL_LAYERS = [
     LAYERS.map_tiles_back,
     LAYERS.map_tiles_front,
     LAYERS.map_tiles,
+    LAYERS.map_tiles_cyclosm,
+    LAYERS.map_tiles_opentopo,
+    LAYERS.map_tiles_esri,
     LAYERS.map_debug,
     LAYERS.map_grid,
     LAYERS.xkcd_tiles,
     LAYERS.xkcd_debug,
     LAYERS.map_tiles_strava,
+    LAYERS.mandelbrot_tiles,
     LAYERS.debug
 ];
 //# sourceMappingURL=layers.js.map

@@ -11,6 +11,13 @@
     <div id="workfield">
     </div>
 
+    <!-- DEMO-3 (minimal slice): visible tile-source attribution, required by OSM/CyclOSM/
+         OpenTopoMap/ESRI's ToU. Text itself is filled in by index.ts from src/layers.ts's
+         ATTRIBUTIONS, so it's defined once, next to the layers themselves — this is just the
+         mount point. Not styled beyond "present and readable" — this is a testbed, not a public
+         deploy yet. -->
+    <div id="attribution" style="position:absolute; left:0; bottom:0; z-index:1000; font:11px sans-serif; background:rgba(255,255,255,0.7); padding:2px 6px; color:#000;"></div>
+
     <!-- Classic (non-module) scripts, in load order: these set up globals/polyfills that the
          ES module entry point below relies on without importing (Math.log2 polyfill, the
          vendored dat.gui UMD global, and the generated xkcd tile data blob — see
