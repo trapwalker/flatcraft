@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Transform2D } from './transform2d.js';
-import { computeTileGridMatrix } from './map.js';
+import { classifyWheelEvent, computeTileGridMatrix, type WheelClassifyState } from './map.js';
 
 // AFF-4's core safety net: computeTileGridMatrix replaced the old inline
 // `x * tile_size - c.x + w / 2` arithmetic in TiledLayer.draw. This reimplements that old
@@ -134,5 +134,96 @@ describe('computeTileGridMatrix', () => {
     const dist0 = b0.x - a0.x;
     const dist1 = b1.x - a1.x;
     expect(dist1).toBeCloseTo(dist0 * 2, 6);
+  });
+});
+
+// ZOOM-12: classifyWheelEvent is mapbox-gl-js's own field-tested mouse-vs-trackpad heuristic
+// (see map.ts's own doc comment on it, and BACKLOG.md's ZOOM-12 entry, for the citations/design),
+// extracted as a standalone pure function specifically so it can be exercised here without a live
+// browser or a real MacBook trackpad (neither is available in this sandbox — see BACKLOG.md's
+// ZOOM-10 note on the same limitation). Each case below is chosen to land deterministically in
+// one specific branch of the heuristic (see map.ts for the branch order/constants), not just to
+// eyeball a "looks about right" outcome.
+describe('classifyWheelEvent (ZOOM-12)', () => {
+  const fresh = (): WheelClassifyState => ({ type: null });
+
+  it('a single, isolated mouse-wheel-notch-sized deltaY classifies as wheel, regardless of timing', () => {
+    // 25 * 4.000244140625 — an exact multiple of the "one notch" modulus mapbox measured, and (at
+    // ~100) the same magnitude a real physical mouse wheel notch reports in Chrome/Firefox/Safari
+    // (see WHEEL_DELTA_PER_STEP's own comment in map.ts, ZOOM-9/ZOOM-10).
+    const value = 25 * 4.000244140625;
+    // A huge, and then a tiny, gap since the "previous" event — the notch-modulus check is
+    // checked first and doesn't care about timing at all, so both must agree.
+    for (const timeDelta of [100000, 5]) {
+      const result = classifyWheelEvent(value, 0 /* DOM_DELTA_PIXEL */, timeDelta, 0, fresh());
+      expect(result.type).toBe('wheel');
+      expect(result.state.type).toBe('wheel');
+      expect(result.startGraceTimer).toBe(false);
+    }
+  });
+
+  it('a single small deltaY classifies as trackpad immediately, even as the very first event of a gesture', () => {
+    // |value| < 4 is checked before the "new gesture" (400ms gap) branch, so this doesn't need a
+    // fast follow-up to be classified — trackpad noise is simply too small to ever be a wheel notch.
+    const result = classifyWheelEvent(3, 0, 5000, 0, fresh());
+    expect(result.type).toBe('trackpad');
+    expect(result.startGraceTimer).toBe(false);
+  });
+
+  it('a rapid stream of small (2-6px) deltaY events classifies as trackpad throughout', () => {
+    const stream = [
+      { deltaY: 3, t: 0 },
+      { deltaY: 4, t: 16 },
+      { deltaY: 5, t: 32 },
+      { deltaY: -2, t: 48 },
+      { deltaY: 6, t: 64 }
+    ];
+    let state = fresh();
+    let lastTime = -10000; // far enough in the past that the first event's own branch doesn't
+    // depend on it (deltaY=3 is caught by the |value|<4 check regardless of timing).
+    for (const { deltaY, t } of stream) {
+      const result = classifyWheelEvent(deltaY, 0, t, lastTime, state);
+      expect(result.type).toBe('trackpad');
+      state = result.state;
+      lastTime = t;
+    }
+  });
+
+  it('a ctrlKey:true stream never reaches this classifier at all — it goes straight to pinch-zoom', () => {
+    // Structural, not behavioral: classifyWheelEvent takes no ctrlKey parameter at all — the
+    // `wheel` listener in map.ts checks `e.ctrlKey || e.metaKey` and calls `_wheelZoom` directly
+    // *before* ever calling this function (see its own source) — verified by inspection here
+    // rather than duplicated as a runtime assertion the function itself can't make.
+    expect(classifyWheelEvent.length).toBe(5); // (deltaY, deltaMode, now, lastTime, state) — no ctrlKey slot
+  });
+
+  it('a new gesture (>400ms gap) with an ambiguous magnitude is undecided and requests a grace timer', () => {
+    // 50 is neither an exact notch multiple nor below the definitely-trackpad threshold.
+    const result = classifyWheelEvent(50, 0, 100000, 0, fresh());
+    expect(result.type).toBeNull();
+    expect(result.state.type).toBeNull();
+    expect(result.startGraceTimer).toBe(true);
+  });
+
+  it('once undecided, a fast, small-magnitude-per-ms follow-up resolves to trackpad', () => {
+    const undecided = classifyWheelEvent(50, 0, 100000, 0, fresh()).state; // {type: null}
+    // |20ms * 6| = 120 < 200 (WHEEL_TRACKPAD_TIME_DELTA_THRESHOLD).
+    const result = classifyWheelEvent(6, 0, 100020, 100000, undecided);
+    expect(result.type).toBe('trackpad');
+  });
+
+  it('once undecided, a fast, large-magnitude-per-ms follow-up resolves to wheel', () => {
+    const undecided = classifyWheelEvent(50, 0, 100000, 0, fresh()).state; // {type: null}
+    // |20ms * 50| = 1000, not < 200 — this reads as a (fast, repeated) wheel, not trackpad.
+    const result = classifyWheelEvent(50, 0, 100020, 100000, undecided);
+    expect(result.type).toBe('wheel');
+  });
+
+  it('DOM_DELTA_LINE (deltaMode=1) normalizes deltaY*40, matching the equivalent raw-pixel value', () => {
+    // 3 lines * 40 == 120 raw pixels — both must classify identically given the same timing/state.
+    const viaLine = classifyWheelEvent(3, 1 /* DOM_DELTA_LINE */, 10, 0, fresh());
+    const viaPixel = classifyWheelEvent(120, 0 /* DOM_DELTA_PIXEL */, 10, 0, fresh());
+    expect(viaLine.type).toBe(viaPixel.type);
+    expect(viaLine.type).toBe('wheel'); // |10ms * 120| = 1200, not < 200 — resolves to wheel
   });
 });
