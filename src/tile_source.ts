@@ -311,6 +311,107 @@ export class StaticCanvasTileSource extends TSCache {
   }
 }
 
+/// DownsampledTileSource //////////////////////////////////////////////////////////////////////////
+// SRC-8: a generic mip-level wrapper over any other TileSource, for sources that have a fixed
+// native zoom level and no real reduced-detail levels below it. The motivating case (see
+// xkcd_tiles, src/layers.ts / DEMO-5): a StaticCanvasTileSource whose onGet ignores `z` entirely
+// and always answers at native (2048x2048) resolution — every zoomed-out level was forced to
+// fetch/scale down full native tiles instead of requesting fewer, pre-shrunk ones the way a real
+// tile pyramid would, which is both wasteful (many full-size canvases drawn tiny) and, once a
+// source's addressing actually depends on `z` the way a real pyramid's does, outright wrong (the
+// same x/y at a coarser z is a *different* native-grid cell, not a shrunk view of the same area —
+// see BACKLOG.md's TSCache.heat() note for the analogous bug in z-independent-vs-dependent
+// addressing). This class fixes both: it owns the doubling-pyramid arithmetic so a wrapped source
+// only ever has to answer at its own single native level.
+//
+// Wraps `source` (the native-resolution TileSource) plus `z0`, its native zoom level in the same
+// numbering TiledLayer passes to get() (i.e. already including that layer's `z_max` offset — see
+// TiledLayer.getLevelParams, src/map.ts).
+export interface DownsampledTileSourceOptions extends TileSourceOptions {
+  source: TileSource; // the wrapped, native-resolution source
+  z0: number; // z at and above which get() is a pure, unchanged passthrough to `source`
+}
+
+export class DownsampledTileSource extends TSCache {
+  source: TileSource;
+  z0: number;
+
+  constructor(options: DownsampledTileSourceOptions) {
+    super(options);
+    this.source = options.source;
+    this.z0 = options.z0;
+    // Reuses TSCache's own `storage` (inherited get()) as the ONE cache here — a built composite
+    // is stored under its own x:y:z key exactly like a passthrough answer would be, no second,
+    // composite-specific cache on top. Levels >= z0 and < z0 share this cache without collision:
+    // the key includes `z`, so a composite at z=5 and a native tile at z=11 (say) never collide
+    // even if x/y happen to match.
+    this.onGet = (x, y, z) => this.buildTile(x, y, z);
+  }
+
+  private buildTile(x: number, y: number, z: number): Tile | null | undefined {
+    if (z >= this.z0) return this.source.get(x, y, z); // native-or-finer: unchanged passthrough
+
+    // Zoomed out past native resolution: composite n x n native tiles into one tile_size x
+    // tile_size canvas, each scaled down into its 1/n-sized quadrant. n = 2^(z0-z) and the native
+    // index range is x*n..x*n+n-1 (same for y) — the standard doubling tile-pyramid relationship,
+    // the same one XYZ/slippy schemes use between adjacent zoom levels.
+    const n = Math.pow(2, this.z0 - z);
+    const sub = this.tile_size / n;
+
+    // Async-source strategy (spelled out here per SRC-8's ask, even though the only consumer today
+    // — xkcd_tiles's StaticCanvasTileSource, fully synchronous — never actually exercises this
+    // branch): build the composite ONLY once every one of the n*n sub-tiles has reached a FINAL
+    // answer (an image, a confirmed "no data", or a confirmed load error) — never a partial one.
+    // A sub-tile still in flight (e.g. an XYZTileSource Tile in its 'prepare' state, no image yet)
+    // makes the whole composite "not ready": return `undefined` here, the same convention every
+    // other TileSource in this file uses for "no answer right now" (see TSCache.get()'s comment —
+    // `undefined` is deliberately never cached, so the *next* get() for this key starts over
+    // rather than getting stuck on a stale/partial answer).
+    //
+    // That next call is cheap even mid-load: `source` is expected to do its own caching (every
+    // concrete TileSource in this file does, via TSCache), so re-asking for a sub-tile that's
+    // already in flight is just a cache lookup, not a new network request — repeated polling
+    // (driven by TiledLayer.draw() calling get() once a frame, same as any other pending tile)
+    // cannot spin or deadlock: it does bounded, cheap work each time and converges the moment the
+    // last sub-tile resolves.
+    //
+    // The alternative considered — cache a partial composite immediately and redraw into that same
+    // cached canvas as more sub-tiles complete — would show quadrants progressively instead of
+    // waiting for the whole tile, but needs TSCache to treat a cached entry as mutable-in-place and
+    // re-checked on every hit (it isn't: a cache hit today just returns the stored value, see
+    // TSCache.get()), plus its own "is this composite still incomplete" bookkeeping to know when to
+    // keep touching an already-cached canvas. Not worth that complexity for a wrapper whose one
+    // real consumer never reaches this code path; left as a documented, deliberate limitation
+    // rather than solved speculatively.
+    let canvas: HTMLCanvasElement | undefined;
+    let ctx: CanvasRenderingContext2D | undefined;
+    let anyData = false;
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const subTile = this.source.get(x * n + i, y * n + j, this.z0);
+        if (subTile === undefined) return undefined; // source itself has no answer yet — retry later
+        if (subTile === null) continue; // confirmed "no data" for this quadrant — final, leave blank
+        if (subTile.image === undefined) {
+          if (subTile.state === 'error') continue; // confirmed permanent failure — final, leave blank
+          return undefined; // still loading — not a final answer, retry later, don't cache
+        }
+        if (!canvas) {
+          canvas = document.createElement('canvas');
+          canvas.width = this.tile_size;
+          canvas.height = this.tile_size;
+          ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+        }
+        (ctx as CanvasRenderingContext2D).drawImage(subTile.image, i * sub, j * sub, sub, sub);
+        anyData = true;
+      }
+    }
+    // No sub-tile anywhere had data: a confirmed "no data" answer for the whole composite, cached
+    // like any other null (see TSCache.get()'s comment on why null and undefined are cached
+    // differently) rather than an empty canvas.
+    return anyData && canvas ? new Tile(x, y, z, { image: canvas }) : null;
+  }
+}
+
 /// HeatableTileSource ////////////////////////////////////////////////////////////////////////////
 // Narrow, duck-typed contract for the LOAD-1 wiring in TiledLayer.draw (src/map.ts): any
 // TileSource that also exposes `heat()` (currently only TSCache) gets its background

@@ -4,7 +4,7 @@ import { Vector } from './vector.js';
 import { BASE_COLOR, DEBUG } from './defines.js';
 import { Iter } from './tools.js';
 import { load_tree, leafFunction } from './tile_tree.js';
-import { XYZTileSource, StaticCanvasTileSource } from './tile_source.js';
+import { XYZTileSource, StaticCanvasTileSource, DownsampledTileSource } from './tile_source.js';
 import { Layer, TiledLayer } from './map.js';
 import type { MapWidget } from './map.js';
 import type { Mat2D } from './mat2d.js';
@@ -96,6 +96,51 @@ export const ATTRIBUTIONS: Record<string, string> = {
   OpenTopoMap: 'Map style: © OpenTopoMap (CC-BY-SA) | Map data: © OpenStreetMap contributors',
   'ESRI World Imagery': 'Imagery: © Esri, Maxar, Earthstar Geographics, and the GIS User Community'
 };
+
+// DEMO-5: xkcd_tiles' underlying data has no real notion of z (drawTile below ignores its `z`
+// argument entirely — it always answers at the comic's one native resolution) — wrapped in
+// DownsampledTileSource (SRC-8, tile_source.ts) so zoomed-out levels below that native resolution
+// get real, pre-shrunk composite tiles (÷2, ÷4, ÷8, ÷16, ... per the direct request) instead of
+// the widget fetching/scaling down full 2048x2048 native tiles at every zoom level, the way it did
+// before. XKCD_Z0 is that native level, in the same numbering TiledLayer passes to get() — it must
+// equal xkcd_tiles'/xkcd_debug's `z_max` below (an existing, unrelated z-offset concept, see
+// TiledLayer.getLevelParams in map.ts) for the wrapper's z >= z0 passthrough threshold to land
+// exactly where the widget's own zoom range calls this its "native" zoom.
+const XKCD_Z0 = 11; // todo: rename to z_deep, same concept as z_max below (see BACKLOG.md)
+
+// LOAD-5's DEFAULT_CACHE_LIMIT (2000, tile_source.ts) was sized for ordinary 256x256 tiles — for
+// xkcd's 2048x2048 canvases (64x the pixel area, ~64x the memory per cached entry) that same limit
+// would let this cache alone hold on the order of tens of GB, which crashed a real browser tab
+// during this ticket's own verification. The crash's actual trigger is DownsampledTileSource
+// itself compounding it further: LOAD-1's automatic heat() prefetch (TiledLayer.draw) queues a
+// ring of *composite* tiles once zoomed below native, and building each one fans out to n*n native
+// fetches (n = 2^(z0-z), see tile_source.ts) — at just one or two zoom-out steps this pulls in far
+// more distinct native tiles than panning around at native zoom ever would, filling the cache
+// dramatically faster than DEFAULT_CACHE_LIMIT assumes. Scaled down here by the same ~64x pixel-area
+// ratio (2000/64 ≈ 32) for both the native source and the composite wrapper, on the same
+// per-instance basis LOAD-5 already supports — bounds steady-state memory for either cache
+// regardless of how deep zoom-out goes, at the cost of more eviction/re-fetching if a screen
+// legitimately shows more than XKCD_CACHE_LIMIT distinct tiles at once (uncommon at this tile size).
+const XKCD_CACHE_LIMIT = 32;
+
+const xkcdTiles = new DownsampledTileSource({
+  tile_size: 2048,
+  z0: XKCD_Z0,
+  cache_limit: XKCD_CACHE_LIMIT,
+  source: new StaticCanvasTileSource({
+    tile_size: 2048,
+    cache_limit: XKCD_CACHE_LIMIT,
+    drawTile: (getCtx, x, y, z) => {
+      const key = x + ':' + (64 - y);
+      const data = TILES_AS_TREE[key];
+      if (data === undefined) return false; // no canvas allocated for the (common) miss case
+
+      console.log('build tile: ' + [x, y, z] + ' data: ' + data.length);
+      load_tree(Iter(data), leafFunction, getCtx(), 2048); // строит изображение тайла через leafFunction
+      return true;
+    }
+  })
+});
 
 // ROT-4 (debug layers): was broken the same way map_grid was — an axis-aligned ctx.rect(x, y,
 // tsize, tsize) (plus a second, smaller "shrunk" rect inside it) at the tile's precomputed
@@ -350,29 +395,22 @@ export const LAYERS: Record<string, Layer> = {
 
   xkcd_tiles: new TiledLayer({
     name: 'XKCD tiles',
-    tile_source: new StaticCanvasTileSource({
-      tile_size: 2048,
-      drawTile: (getCtx, x, y, z) => {
-        const key = x + ':' + (64 - y);
-        const data = TILES_AS_TREE[key];
-        if (data === undefined) return false; // no canvas allocated for the (common) miss case
-
-        console.log('build tile: ' + [x, y, z] + ' data: ' + data.length);
-        load_tree(Iter(data), leafFunction, getCtx(), 2048); // строит изображение тайла через leafFunction
-        return true;
-      }
-    }),
+    tile_source: xkcdTiles,
     visible: false,
-    z_max: 11 // todo: rename to z_deep
+    z_max: XKCD_Z0 // todo: rename to z_deep
   }),
 
+  // DEMO-5: shares xkcdTiles (the same DownsampledTileSource instance, not just an equivalent one)
+  // with xkcd_tiles above — the two layers' get()s for the same (x,y,z) hit the exact same
+  // TSCache.storage entry, so this overlay never triggers a second, redundant composite build.
   xkcd_debug: new TiledLayer({
     name: 'XKCD tiles debug',
+    tile_source: xkcdTiles,
     tile_size: 2048,
     color: 'rgba(255, 0, 0, 0.5)',
     onTileDraw: drawTileDebug,
     visible: false,
-    z_max: 11 // todo: rename to z_deep
+    z_max: XKCD_Z0 // todo: rename to z_deep
   }),
 
   map_tiles_back: new TiledLayer({

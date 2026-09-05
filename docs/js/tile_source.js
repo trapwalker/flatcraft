@@ -220,6 +220,83 @@ export class StaticCanvasTileSource extends TSCache {
         };
     }
 }
+export class DownsampledTileSource extends TSCache {
+    constructor(options) {
+        super(options);
+        this.source = options.source;
+        this.z0 = options.z0;
+        // Reuses TSCache's own `storage` (inherited get()) as the ONE cache here — a built composite
+        // is stored under its own x:y:z key exactly like a passthrough answer would be, no second,
+        // composite-specific cache on top. Levels >= z0 and < z0 share this cache without collision:
+        // the key includes `z`, so a composite at z=5 and a native tile at z=11 (say) never collide
+        // even if x/y happen to match.
+        this.onGet = (x, y, z) => this.buildTile(x, y, z);
+    }
+    buildTile(x, y, z) {
+        if (z >= this.z0)
+            return this.source.get(x, y, z); // native-or-finer: unchanged passthrough
+        // Zoomed out past native resolution: composite n x n native tiles into one tile_size x
+        // tile_size canvas, each scaled down into its 1/n-sized quadrant. n = 2^(z0-z) and the native
+        // index range is x*n..x*n+n-1 (same for y) — the standard doubling tile-pyramid relationship,
+        // the same one XYZ/slippy schemes use between adjacent zoom levels.
+        const n = Math.pow(2, this.z0 - z);
+        const sub = this.tile_size / n;
+        // Async-source strategy (spelled out here per SRC-8's ask, even though the only consumer today
+        // — xkcd_tiles's StaticCanvasTileSource, fully synchronous — never actually exercises this
+        // branch): build the composite ONLY once every one of the n*n sub-tiles has reached a FINAL
+        // answer (an image, a confirmed "no data", or a confirmed load error) — never a partial one.
+        // A sub-tile still in flight (e.g. an XYZTileSource Tile in its 'prepare' state, no image yet)
+        // makes the whole composite "not ready": return `undefined` here, the same convention every
+        // other TileSource in this file uses for "no answer right now" (see TSCache.get()'s comment —
+        // `undefined` is deliberately never cached, so the *next* get() for this key starts over
+        // rather than getting stuck on a stale/partial answer).
+        //
+        // That next call is cheap even mid-load: `source` is expected to do its own caching (every
+        // concrete TileSource in this file does, via TSCache), so re-asking for a sub-tile that's
+        // already in flight is just a cache lookup, not a new network request — repeated polling
+        // (driven by TiledLayer.draw() calling get() once a frame, same as any other pending tile)
+        // cannot spin or deadlock: it does bounded, cheap work each time and converges the moment the
+        // last sub-tile resolves.
+        //
+        // The alternative considered — cache a partial composite immediately and redraw into that same
+        // cached canvas as more sub-tiles complete — would show quadrants progressively instead of
+        // waiting for the whole tile, but needs TSCache to treat a cached entry as mutable-in-place and
+        // re-checked on every hit (it isn't: a cache hit today just returns the stored value, see
+        // TSCache.get()), plus its own "is this composite still incomplete" bookkeeping to know when to
+        // keep touching an already-cached canvas. Not worth that complexity for a wrapper whose one
+        // real consumer never reaches this code path; left as a documented, deliberate limitation
+        // rather than solved speculatively.
+        let canvas;
+        let ctx;
+        let anyData = false;
+        for (let j = 0; j < n; j++) {
+            for (let i = 0; i < n; i++) {
+                const subTile = this.source.get(x * n + i, y * n + j, this.z0);
+                if (subTile === undefined)
+                    return undefined; // source itself has no answer yet — retry later
+                if (subTile === null)
+                    continue; // confirmed "no data" for this quadrant — final, leave blank
+                if (subTile.image === undefined) {
+                    if (subTile.state === 'error')
+                        continue; // confirmed permanent failure — final, leave blank
+                    return undefined; // still loading — not a final answer, retry later, don't cache
+                }
+                if (!canvas) {
+                    canvas = document.createElement('canvas');
+                    canvas.width = this.tile_size;
+                    canvas.height = this.tile_size;
+                    ctx = canvas.getContext('2d');
+                }
+                ctx.drawImage(subTile.image, i * sub, j * sub, sub, sub);
+                anyData = true;
+            }
+        }
+        // No sub-tile anywhere had data: a confirmed "no data" answer for the whole composite, cached
+        // like any other null (see TSCache.get()'s comment on why null and undefined are cached
+        // differently) rather than an empty canvas.
+        return anyData && canvas ? new Tile(x, y, z, { image: canvas }) : null;
+    }
+}
 export function isHeatableTileSource(source) {
     return typeof source.heat === 'function';
 }
