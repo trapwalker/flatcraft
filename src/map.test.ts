@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { Transform2D } from './transform2d.js';
-import { classifyWheelEvent, computeTileGridMatrix, type WheelClassifyState } from './map.js';
+import {
+  classifyWheelEvent,
+  computeTileGridMatrix,
+  hasCrossedActivationThreshold,
+  isDoubleTapContinuation,
+  isTap,
+  type PendingTap,
+  type WheelClassifyState
+} from './map.js';
 
 // AFF-4's core safety net: computeTileGridMatrix replaced the old inline
 // `x * tile_size - c.x + w / 2` arithmetic in TiledLayer.draw. This reimplements that old
@@ -225,5 +233,77 @@ describe('classifyWheelEvent (ZOOM-12)', () => {
     const viaPixel = classifyWheelEvent(120, 0 /* DOM_DELTA_PIXEL */, 10, 0, fresh());
     expect(viaLine.type).toBe(viaPixel.type);
     expect(viaLine.type).toBe('wheel'); // |10ms * 120| = 1200, not < 200 — resolves to wheel
+  });
+});
+
+// ZOOM-13: isTap/isDoubleTapContinuation/hasCrossedActivationThreshold are the pure timing-and-
+// distance predicates pulled out of the touchstart/touchmove/touchend handlers — see map.ts's own
+// doc comment on them (and BACKLOG.md's ZOOM-13 entry) for why only these, and not the rest of the
+// gesture's state machine, are extracted this way. Boundary values below are chosen right at each
+// constant's own threshold (see map.ts: TAP_MAX_DURATION_MS=250, TAP_MAX_MOVEMENT_PX=10,
+// DOUBLE_TAP_MAX_INTERVAL_MS=300, DOUBLE_TAP_MAX_DISTANCE_PX=40, ZOOM_ROTATE_ACTIVATION_PX=10) to
+// pin down the exact <= / > cutoffs, not just "clearly inside" / "clearly outside" cases.
+describe('isTap (ZOOM-13)', () => {
+  it('a short, still touch is a tap', () => {
+    expect(isTap(100, 2)).toBe(true);
+  });
+
+  it('exactly at the duration/movement limits still counts as a tap (<=, not <)', () => {
+    expect(isTap(250, 10)).toBe(true);
+  });
+
+  it('a touch held a moment too long is not a tap', () => {
+    expect(isTap(251, 0)).toBe(false);
+  });
+
+  it('a touch that moved a hair too far is not a tap', () => {
+    expect(isTap(0, 10.0001)).toBe(false);
+  });
+});
+
+describe('isDoubleTapContinuation (ZOOM-13)', () => {
+  it('no pending tap at all is never a continuation', () => {
+    expect(isDoubleTapContinuation(null, 1000, { x: 0, y: 0 })).toBe(false);
+  });
+
+  it('a second tap soon after and close to the first is a continuation', () => {
+    const pending: PendingTap = { time: 1000, pos: { x: 100, y: 100 } };
+    expect(isDoubleTapContinuation(pending, 1200, { x: 110, y: 105 })).toBe(true);
+  });
+
+  it('exactly at the interval/distance limits still counts (<=, not <)', () => {
+    const pending: PendingTap = { time: 1000, pos: { x: 0, y: 0 } };
+    // elapsed = 300 (== DOUBLE_TAP_MAX_INTERVAL_MS), distance = 40 (== DOUBLE_TAP_MAX_DISTANCE_PX).
+    expect(isDoubleTapContinuation(pending, 1300, { x: 40, y: 0 })).toBe(true);
+  });
+
+  it('a second tap too long after the first is not a continuation, even right on top of it', () => {
+    const pending: PendingTap = { time: 1000, pos: { x: 50, y: 50 } };
+    expect(isDoubleTapContinuation(pending, 1301, { x: 50, y: 50 })).toBe(false);
+  });
+
+  it('a second tap too far from the first is not a continuation, even immediately after', () => {
+    const pending: PendingTap = { time: 1000, pos: { x: 0, y: 0 } };
+    expect(isDoubleTapContinuation(pending, 1001, { x: 40.0001, y: 0 })).toBe(false);
+  });
+});
+
+describe('hasCrossedActivationThreshold (ZOOM-13)', () => {
+  it('no movement has not crossed', () => {
+    expect(hasCrossedActivationThreshold({ x: 0, y: 0 }, { x: 0, y: 0 })).toBe(false);
+  });
+
+  it('movement right at the threshold has not crossed yet (>, not >=)', () => {
+    expect(hasCrossedActivationThreshold({ x: 0, y: 0 }, { x: 10, y: 0 })).toBe(false);
+  });
+
+  it('movement a hair past the threshold has crossed', () => {
+    expect(hasCrossedActivationThreshold({ x: 0, y: 0 }, { x: 10.0001, y: 0 })).toBe(true);
+  });
+
+  it('diagonal movement is measured as straight-line distance, not per-axis', () => {
+    // 6-8-10 triangle: exactly 10px away diagonally, same boundary as the straight case above.
+    expect(hasCrossedActivationThreshold({ x: 0, y: 0 }, { x: 6, y: 8 })).toBe(false);
+    expect(hasCrossedActivationThreshold({ x: 0, y: 0 }, { x: 6.001, y: 8 })).toBe(true);
   });
 });

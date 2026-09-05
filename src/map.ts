@@ -158,6 +158,41 @@ const ROTATE_DRAG_SENSITIVITY = Math.PI / 300;
 // ROT-1: radians per keyboard step (5°) — small enough to nudge, not so small it feels inert.
 const ROTATE_KEY_STEP = Math.PI / 36;
 
+// ZOOM-13: one-finger double-tap-and-hold zoom+rotate — the standard mobile-map single-finger
+// zoom gesture (Google Maps et al.), extended here (direct user request) to also rotate on the
+// horizontal axis. See BACKLOG.md's ZOOM-13 entry for the full state machine
+// (MapWidget._zoom_rotate_state/_tap_pending/_single_touch_start/etc.) these constants drive, and
+// the touchstart/touchmove/touchend handlers below for where they're used. None of these are
+// measured against a real device (this sandbox has none — see BACKLOG.md's ZOOM-10/ZOOM-12 notes
+// on the same limitation) — chosen in the same "typical mobile gesture" ballpark other mobile UI
+// conventions use, same spirit as TAP_MAX_DURATION_MS's own comment.
+
+// A touch that starts and ends within this long, having moved no more than TAP_MAX_MOVEMENT_PX,
+// counts as a tap rather than a drag (see MapWidget._single_touch_start/_tap_pending). In the same
+// ballpark as Android's own tap/long-press disambiguation window — this project has no
+// competing long-press gesture, so there's no pressure to shrink it further.
+const TAP_MAX_DURATION_MS = 250;
+// How far a touch may drift between its start and release and still count as a tap, not a
+// micro-drag — a real finger is never perfectly still.
+const TAP_MAX_MOVEMENT_PX = 10;
+// Two taps count as a double-tap if the second one's touchstart lands within this long of the
+// first one's touchend...
+const DOUBLE_TAP_MAX_INTERVAL_MS = 300;
+// ...and within this many px of it. Deliberately looser than TAP_MAX_MOVEMENT_PX — a real
+// double-tap's second finger-down rarely lands exactly where the first one lifted.
+const DOUBLE_TAP_MAX_DISTANCE_PX = 40;
+// Once armed (see MapWidget._zoom_rotate_state), the second tap's finger has to move at least
+// this far from where it landed before the gesture commits to 'active' — small enough that the
+// zoom/rotate feels immediate once it starts, large enough that the finger merely settling back
+// onto the screen for the second tap doesn't itself read as the start of a drag.
+const ZOOM_ROTATE_ACTIVATION_PX = 10;
+// Screen pixels of vertical drag per doubling/halving of zoom, once 'active' — see the touchmove
+// handler's `Math.pow(2, -dy / ZOOM_DRAG_PX_PER_DOUBLING)`. Picked on the same "feel", not
+// measured, footing as ROTATE_DRAG_SENSITIVITY above (which reaches its own "full effect", a 180°
+// turn, over roughly the same ~300px), so a diagonal drag zooms and rotates at comparably paced
+// rates instead of one axis visibly outrunning the other.
+const ZOOM_DRAG_PX_PER_DOUBLING = 300;
+
 export interface MapWidgetOptions {
   scrollType?: string;
   location?: Vector;
@@ -193,6 +228,51 @@ interface TouchGestureState {
   // handler's own gating.
   distance: number;
   angle: number;
+}
+
+// ZOOM-13: a completed, still-pending single tap — set by touchend when a lone touch's duration
+// and movement both stayed under TAP_MAX_DURATION_MS/TAP_MAX_MOVEMENT_PX. Matched against by the
+// very next single-finger touchstart to decide whether that one is the second tap of a
+// double-tap — see MapWidget._tap_pending and the touchstart handler below.
+export interface PendingTap {
+  time: number;
+  pos: XY;
+}
+
+// ZOOM-13: bookkeeping for the touch currently down alone, not yet known to be a tap or a drag —
+// recorded at touchstart so touchend can measure its final duration/movement against
+// TAP_MAX_DURATION_MS/TAP_MAX_MOVEMENT_PX. Cleared (not just left stale) the moment a second
+// finger joins, or the touch is consumed into an armed zoom/rotate gesture instead — see the
+// touchstart handler.
+interface SingleTouchStart {
+  id: number;
+  time: number;
+  pos: XY;
+}
+
+// ZOOM-13: pure, DOM-free predicates for the tap/double-tap/activation-threshold timing-and-
+// distance checks the touchstart/touchmove/touchend handlers below need — extracted specifically
+// so they're unit-testable without a live touch device or Playwright (see map.test.ts), the same
+// reasoning ZOOM-12's classifyWheelEvent extraction already established for this file. The rest of
+// the gesture's state machine (transitions between null/'armed'/'active', which touch id is being
+// tracked, draining deltas into zoomBy()/_drotation) stays inline in the handlers themselves —
+// unlike classifyWheelEvent, that part is inseparable from live Touch/TouchEvent objects and
+// MapWidget's other mutable fields (_zoom_anchor_screen, zoomBy(), _drotation) without either
+// duplicating them here or threading half the class through as parameters; see BACKLOG.md's
+// ZOOM-13 entry for this judgment call.
+export function isTap(durationMs: number, movementPx: number): boolean {
+  return durationMs <= TAP_MAX_DURATION_MS && movementPx <= TAP_MAX_MOVEMENT_PX;
+}
+
+export function isDoubleTapContinuation(pending: PendingTap | null, now: number, pos: XY): boolean {
+  if (!pending) return false;
+  const elapsed = now - pending.time;
+  const distance = Math.hypot(pos.x - pending.pos.x, pos.y - pending.pos.y);
+  return elapsed <= DOUBLE_TAP_MAX_INTERVAL_MS && distance <= DOUBLE_TAP_MAX_DISTANCE_PX;
+}
+
+export function hasCrossedActivationThreshold(start: XY, pos: XY): boolean {
+  return Math.hypot(pos.x - start.x, pos.y - start.y) > ZOOM_ROTATE_ACTIVATION_PX;
 }
 
 export class MapWidget { // todo: setup layers
@@ -294,6 +374,29 @@ export class MapWidget { // todo: setup layers
   // added/removed mid-gesture). Reset (to a fresh snapshot of whatever touches remain) on every
   // touchstart/touchend so a finger being added or lifted never produces a spurious jump.
   private _touch_gesture: TouchGestureState | null;
+  // ZOOM-13: one-finger double-tap-and-hold zoom+rotate — see BACKLOG.md's ZOOM-13 entry for the
+  // full design. `_tap_pending` is the last completed single tap, if it's still within
+  // DOUBLE_TAP_MAX_INTERVAL_MS/_DISTANCE_PX of becoming a double-tap's first half.
+  // `_single_touch_start` tracks the touch currently down alone, so touchend can tell whether it
+  // qualifies as a tap at all. `_zoom_rotate_state` is the gesture's own small state machine:
+  // `null` (not running), `'armed'` (a double-tap just landed, waiting to see if the second tap's
+  // finger moves enough to commit), or `'active'` (committed — every further move zooms/rotates).
+  // `_zoom_rotate_touch_id` identifies which live touch the armed/active gesture is tracking, so
+  // an unrelated touchmove/touchend for some other finger is never mistaken for it (though a
+  // second finger joining at all immediately cancels the gesture regardless — see the touchstart
+  // handler). `_zoom_rotate_start` is the second tap's own position: the reference point for the
+  // armed->active activation-distance check, and — unchanged for the rest of the gesture — also
+  // what `_zoom_anchor_screen` is set to once the gesture arms. `_zoom_rotate_last` is the most
+  // recent position of the tracked touch, drained into zoomBy()/_drotation as an incremental delta
+  // on every touchmove while 'active' (reset, not accumulated from `_zoom_rotate_start`, at the
+  // moment the gesture crosses into 'active' — see the touchmove handler — so committing doesn't
+  // itself apply a jump-sized delta for the whole armed-phase wobble).
+  private _tap_pending: PendingTap | null;
+  private _single_touch_start: SingleTouchStart | null;
+  private _zoom_rotate_state: 'armed' | 'active' | null;
+  private _zoom_rotate_touch_id: number | null;
+  private _zoom_rotate_start: XY;
+  private _zoom_rotate_last: XY;
 
   constructor(container_id: string, options?: MapWidgetOptions) {
     this.fps_stat = new AvgRing(100);
@@ -367,6 +470,12 @@ export class MapWidget { // todo: setup layers
     this._wheel_grace_timer = null;
     this._touches = new Map();
     this._touch_gesture = null;
+    this._tap_pending = null;
+    this._single_touch_start = null;
+    this._zoom_rotate_state = null;
+    this._zoom_rotate_touch_id = null;
+    this._zoom_rotate_start = { x: 0, y: 0 };
+    this._zoom_rotate_last = { x: 0, y: 0 };
 
     // ZOOM-3: without this, browsers apply their own gesture handling (page pinch-zoom,
     // scroll-by-touch, double-tap-to-zoom) to the canvas concurrently with ours — fighting each
@@ -610,6 +719,46 @@ export class MapWidget { // todo: setup layers
 
     this.canvas.addEventListener('touchstart', (e: TouchEvent) => {
       e.preventDefault();
+
+      if (e.touches.length >= 2 && this._zoom_rotate_state !== null) {
+        // ZOOM-13: a second finger joining while the one-finger double-tap-hold gesture is
+        // armed/active is a deliberate, immediate cancel (BACKLOG.md is explicit about this, the
+        // same "don't hedge further" reasoning as arming itself) — fall back to the existing
+        // two-finger pan/pinch/rotate handling below completely unchanged.
+        this._zoom_rotate_state = null;
+        this._zoom_rotate_touch_id = null;
+      }
+
+      if (e.touches.length === 1) {
+        // A lone finger just went down — either the second tap of a double-tap (if it lands close
+        // enough, soon enough, to `_tap_pending`), or just an ordinary touch that touchend will
+        // later judge as a tap or a drag.
+        const t = e.touches[0];
+        const pos = touchPoint(t);
+        const now = performance.now();
+        if (isDoubleTapContinuation(this._tap_pending, now, pos)) {
+          // ZOOM-13: second tap of a double-tap — arm the gesture. Ordinary single-finger pan for
+          // THIS touch's subsequent movement is fully, deliberately suppressed from here on (see
+          // the touchmove handler below), not merely deferred pending further evidence.
+          this._zoom_rotate_state = 'armed';
+          this._zoom_rotate_touch_id = t.identifier;
+          this._zoom_rotate_start = pos;
+          this._zoom_rotate_last = pos;
+          // Fixed for the whole gesture, unlike the pinch/wheel anchor which tracks the live
+          // touch/cursor position every event — see _zoom_rotate_start's own doc comment.
+          this._zoom_anchor_screen = pos;
+          this._tap_pending = null;
+          this._single_touch_start = null;
+        } else {
+          // Not a double-tap continuation — an ordinary lone touch; touchend below decides whether
+          // it actually qualifies as a (new pending) tap.
+          this._single_touch_start = { id: t.identifier, time: now, pos };
+        }
+      } else {
+        // Two or more fingers down — not a lone touch, so it can't itself become or continue a tap.
+        this._single_touch_start = null;
+      }
+
       syncTouches(e.touches);
       // Fresh baseline for the next touchmove's delta — see _touch_gesture's own doc comment on
       // why a finger being added mid-gesture must not produce a jump against a stale one.
@@ -620,6 +769,57 @@ export class MapWidget { // todo: setup layers
 
     this.canvas.addEventListener('touchmove', (e: TouchEvent) => {
       e.preventDefault();
+
+      if (this._zoom_rotate_state !== null) {
+        // ZOOM-13: the one-finger double-tap-hold gesture owns this touch's movement completely —
+        // see the touchstart handler above for why, and BACKLOG.md's ZOOM-13 entry for the full
+        // design. Kept in sync for hygiene/consistency with the invariant _touch_gesture normally
+        // upholds (see its own doc comment) even though this branch doesn't itself read it back.
+        syncTouches(e.touches);
+        this._touch_gesture = touchGestureState();
+
+        let t: Touch | null = null;
+        for (let i = 0; i < e.touches.length; i++) {
+          if (e.touches[i].identifier === this._zoom_rotate_touch_id) { t = e.touches[i]; break; }
+        }
+        if (t) {
+          const pos = touchPoint(t);
+          if (this._zoom_rotate_state === 'armed') {
+            if (hasCrossedActivationThreshold(this._zoom_rotate_start, pos)) {
+              // Crossing the activation threshold commits to 'active' — the incremental-delta
+              // baseline resets to THIS point, not the original tap position, so the very move
+              // that crosses the threshold doesn't itself apply a jump-sized delta for the whole
+              // armed-phase wobble (BACKLOG.md is explicit about this).
+              this._zoom_rotate_state = 'active';
+              this._zoom_rotate_last = pos;
+            }
+          } else {
+            // 'active': both axes apply simultaneously and independently — no axis locking, per
+            // BACKLOG.md's own reasoning (a diagonal move zooms AND rotates at once).
+            const last = this._zoom_rotate_last;
+            const dy = pos.y - last.y;
+            const dx = pos.x - last.x;
+            this._zoom_rotate_last = pos;
+
+            if (dy !== 0) {
+              // Up (dy<0) = zoom in, down = zoom out — same sign as Google Maps' own one-finger
+              // double-tap-drag zoom (BACKLOG.md). `_zoom_anchor_screen` stays whatever it was set
+              // to at arm time (the second tap's position, fixed for the whole gesture) —
+              // zoomBy()/onRepaint's existing anchor-drift correction does the rest, same as
+              // pinch/wheel zoom.
+              this.zoomBy(Math.pow(2, -dy / ZOOM_DRAG_PX_PER_DOUBLING));
+            }
+            if (dx !== 0) {
+              // Same formula, same ROTATE_DRAG_SENSITIVITY, and the same sign convention as
+              // Shift+drag above (`old_x - new_x`, i.e. `last.x - pos.x` here) — reused verbatim
+              // rather than re-derived, per BACKLOG.md, so both inputs feel identical.
+              this._drotation += (last.x - pos.x) * ROTATE_DRAG_SENSITIVITY;
+            }
+          }
+        }
+        return;
+      }
+
       const previous = this._touch_gesture;
       syncTouches(e.touches);
       const current = touchGestureState();
@@ -662,6 +862,41 @@ export class MapWidget { // todo: setup layers
 
     const onTouchEnd = (e: TouchEvent): void => {
       e.preventDefault();
+
+      if (this._zoom_rotate_state !== null) {
+        for (let i = 0; i < e.changedTouches.length; i++) {
+          if (e.changedTouches[i].identifier === this._zoom_rotate_touch_id) {
+            // ZOOM-13: ends the gesture either way — 'active' had an explicit drag (not a tap);
+            // 'armed' without ever crossing the activation threshold is BACKLOG.md's "clean
+            // double-tap, no drag" case, reset with no special action and — per BACKLOG.md — not
+            // re-entered into tap matching (this touch's own tap was already consumed when it
+            // armed the gesture at touchstart, see there).
+            this._zoom_rotate_state = null;
+            this._zoom_rotate_touch_id = null;
+            break;
+          }
+        }
+      } else if (e.type === 'touchend') {
+        // Not touchcancel — an aborted contact never completes a tap. Did the touch that just
+        // ended qualify as an ordinary tap? If so, it becomes the new pending tap for the very
+        // next touchstart to potentially pair with (see the touchstart handler above).
+        for (let i = 0; i < e.changedTouches.length; i++) {
+          const ct = e.changedTouches[i];
+          if (this._single_touch_start && this._single_touch_start.id === ct.identifier) {
+            const pos = touchPoint(ct);
+            const now = performance.now();
+            const start = this._single_touch_start;
+            const duration = now - start.time;
+            const moved = Math.hypot(pos.x - start.pos.x, pos.y - start.pos.y);
+            if (isTap(duration, moved)) {
+              this._tap_pending = { time: now, pos };
+            }
+            this._single_touch_start = null;
+            break;
+          }
+        }
+      }
+
       syncTouches(e.touches);
       // Fresh baseline again (see touchstart) — covers going from two fingers down to one (keeps
       // panning, cleanly drops pinch/twist) as well as the last finger lifting.
