@@ -315,17 +315,26 @@ export class MapWidget {
         // ZOOM-1: re-anchor `c` so that whatever world point was under `_zoom_anchor_screen` before
         // this frame's zoom step is still under it after — applied every frame the zoom is easing,
         // not just once at the end, so the anchor doesn't drift mid-animation. Derived directly from
-        // screenToWorld's formula (world = centered/zoom + c): the drift introduced by changing zoom
-        // alone, at a fixed `c`, is `centered * (1/old_zoom - 1/new_zoom)` — subtracting it out of
-        // `c` is what keeps `centered` (and so the anchor) pointing at the same world position.
+        // screenToWorld's formula (world = rotate(rotation, centered/zoom) + c): the drift introduced
+        // by changing zoom alone, at a fixed `c`/`rotation`, is `rotate(rotation, centered) *
+        // (1/old_zoom - 1/new_zoom)` — subtracting it out of `c` is what keeps `centered` (and so the
+        // anchor) pointing at the same world position.
+        //
+        // ROT-6: `centered` is a *screen*-space vector (relative to the canvas center); screenToWorld
+        // rotates it into world space before adding `c` (see its own body), so this correction must
+        // rotate it the same way before subtracting — the original version added the un-rotated
+        // vector straight into `c`, correct only at rotation 0 and drifting the anchor sideways at any
+        // other angle (worse the further from 0, most visible at max zoom where the anchor correction
+        // dominates `c`'s frame-to-frame movement).
         if (this._zoom_anchor_screen && this.zoom_factor !== old_zoom_factor) {
             const centered = {
                 x: this._zoom_anchor_screen.x - this.canvas.width / 2,
                 y: this._zoom_anchor_screen.y - this.canvas.height / 2
             };
             const drift = 1 / old_zoom_factor - 1 / this.zoom_factor;
-            this.c.x += centered.x * drift;
-            this.c.y += centered.y * drift;
+            const rotated = Mat2D.rotation(this.rotation).transformVector(centered);
+            this.c.x += rotated.x * drift;
+            this.c.y += rotated.y * drift;
         }
         // ROT-1: a drag writes `rotation` directly (immediate feedback, like `c`) and keeps
         // `rotation_target` in sync so the easing below has nothing left to do once the drag ends.
@@ -376,8 +385,11 @@ export class MapWidget {
                 this._scroll_velocity.set(0, 0);
             if (this._mouse_move_flag)
                 this._scroll_velocity.add(this._dx * this.sliding_value, this._dy * this.sliding_value);
+            // ROT-6: routed through scroll() (not a direct this.c.add()) so the same rotation
+            // treatment as every other pan path applies here too — this velocity is a screen-oriented
+            // vector same as _dx/_dy, just accumulated over time.
             if (this._scroll_velocity.length2())
-                this.c.add(this._scroll_velocity);
+                this.scroll(this._scroll_velocity.x, this._scroll_velocity.y);
             this._scroll_velocity.div(this.inertion_value + 1);
             if (this._scroll_velocity.length2() < 0.1)
                 this._scroll_velocity.set(0, 0);
@@ -414,8 +426,18 @@ export class MapWidget {
         //this.update_url_position();
         // todo: some recalculate?
     }
+    // ROT-6: `dx`/`dy` are a *screen*-oriented vector (already scaled by 1/zoom_factor by the
+    // caller — see the mouse-drag `_dx`/`_dy` drain and the WASD speed calc in onRepaint) — e.g.
+    // "dx>0" means "the view should move as if the content were pushed rightward on screen", the
+    // same convention screenToWorld's `centered` uses. Once the camera is rotated, screen-right is
+    // no longer world-+x, so the vector has to be rotated into world space before it's added to
+    // `c` — every pan control (mouse-drag, WASD) otherwise stays tied to the ORIGINAL, unrotated
+    // axes, so e.g. at a 180° rotation every direction comes out inverted from what's on screen
+    // (direct user report). Matches Mat2D.rotation's convention, same as the ZOOM-1 anchor-drift
+    // correction just above, which needed the identical fix for the identical reason.
     scroll(dx, dy) {
-        this.locate(this.c.x + dx, this.c.y + dy);
+        const rotated = Mat2D.rotation(this.rotation).transformVector({ x: dx, y: dy });
+        this.locate(this.c.x + rotated.x, this.c.y + rotated.y);
     }
     /** Actual canvas pixel coordinates (top-left origin, e.g. from `event.offsetX/offsetY`) -> world coordinates. */
     screenToWorld(screenPoint) {
