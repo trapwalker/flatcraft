@@ -51,6 +51,70 @@ const ZOOM_EDGE_SOFTNESS = 0.5;
 // magnitudes for the same gesture, which is exactly the point of scaling by it rather than
 // treating every event as one full step.
 const WHEEL_DELTA_PER_STEP = 100;
+// ZOOM-12: device-classification heuristic for a `wheel` event — is this actually a mouse wheel,
+// or a laptop trackpad synthesizing `wheel` events for a two-finger swipe/pinch? The web platform
+// gives no reliable first-class signal for this (confirmed by several independent sources — see
+// BACKLOG.md's ZOOM-12 entry); `e.ctrlKey`/`e.metaKey` catches pinch-to-zoom specifically (both a
+// physical Ctrl+wheel and a trackpad pinch set it — a documented browser convention, Chrome since
+// M35/Firefox since 55), but plain wheel-vs-swipe (both report `ctrlKey: false`) needs an actual
+// heuristic. Ported near-verbatim from mapbox-gl-js's `src/ui/handler/scroll_zoom.ts` (MIT)
+// rather than re-derived — its magic numbers are years of field experience across real
+// devices/browsers, not something to re-tune from scratch (the same principle ZOOM-9/ZOOM-10
+// already relied on). Extracted as a standalone, DOM-free pure function — rather than inlined in
+// the `wheel` listener below — specifically so it's unit-testable without a live browser (see
+// map.test.ts): MapWidget's `_wheel_state`/`_wheel_last_time` fields are the only real caller,
+// threading state through call to call the same way a test fabricates it.
+//
+// `WHEEL_DOM_DELTA_LINE` mirrors `WheelEvent.DOM_DELTA_LINE`'s value (1) without depending on the
+// DOM global itself, so this function stays callable under plain Node (vitest's default
+// environment here has no DOM/jsdom).
+const WHEEL_DOM_DELTA_LINE = 1;
+// Empirically-measured magnitude of one physical mouse-wheel "notch" in Chrome/Firefox — mapbox's
+// own comment calls this "a browser magic number, not meant to be understood". A normalized
+// `value` that's an exact multiple of it is almost certainly a real wheel notch: trackpad output
+// is continuously-varying, never neatly quantized like this.
+const WHEEL_NOTCH_MODULUS = 4.000244140625;
+// Below this magnitude, an event is almost certainly trackpad noise/momentum — no mouse-wheel
+// notch is ever reported this small.
+const WHEEL_DEFINITELY_TRACKPAD_BELOW = 4;
+// A gap this long (ms) since the previous wheel event means a new gesture is starting — its
+// device type can't be inferred from timing/cadence alone yet.
+const WHEEL_NEW_GESTURE_GAP_MS = 400;
+// Grace period (ms): if nothing else arrives to help classify a just-started gesture within this
+// window, assume it was a single, isolated mouse-wheel notch — a real trackpad's momentum stream
+// fires far more often than this. See MapWidget's `_wheel_grace_timer`.
+const WHEEL_CLASSIFY_GRACE_MS = 40;
+// Fallback once a gesture has repeated fast enough to classify from cadence: a small
+// magnitude-per-millisecond reading means trackpad, a large one means a (fast, repeated) wheel.
+const WHEEL_TRACKPAD_TIME_DELTA_THRESHOLD = 200;
+export function classifyWheelEvent(deltaY, deltaMode, now, lastTime, state) {
+    const value = deltaMode === WHEEL_DOM_DELTA_LINE ? deltaY * 40 : deltaY;
+    const timeDelta = now - lastTime;
+    if (value !== 0 && value % WHEEL_NOTCH_MODULUS === 0) {
+        // Definitely a real mouse wheel — checked first, and independent of timing/previous state,
+        // same priority order as mapbox's own implementation.
+        return { type: 'wheel', state: { type: 'wheel' }, startGraceTimer: false };
+    }
+    if (value !== 0 && Math.abs(value) < WHEEL_DEFINITELY_TRACKPAD_BELOW) {
+        // Definitely trackpad — too small to ever be a real wheel notch.
+        return { type: 'trackpad', state: { type: 'trackpad' }, startGraceTimer: false };
+    }
+    if (timeDelta > WHEEL_NEW_GESTURE_GAP_MS) {
+        // A new gesture: not yet knowable from timing alone.
+        return { type: null, state: { type: null }, startGraceTimer: true };
+    }
+    if (!state.type) {
+        // Repeated event, still undecided from earlier in this same gesture — infer from
+        // magnitude-per-millisecond, and remember the inference for the rest of the gesture.
+        const inferred = Math.abs(timeDelta * value) < WHEEL_TRACKPAD_TIME_DELTA_THRESHOLD ? 'trackpad' : 'wheel';
+        return { type: inferred, state: { type: inferred }, startGraceTimer: false };
+    }
+    // Repeated event, already decided earlier in this gesture — stick with it rather than
+    // re-classifying every single event (a real gesture's later events can easily stray into the
+    // opposite magnitude range, e.g. a trackpad's momentum tail briefly spiking, or a fast mouse
+    // scroll's cadence looking "trackpad-slow" — once resolved, ride it out for the gesture).
+    return { type: state.type, state: { type: state.type }, startGraceTimer: false };
+}
 // ROT-1: radians per pixel of horizontal Shift+drag — chosen so a full 180° turn takes a
 // comfortable ~300px drag, not a tuned/measured value.
 const ROTATE_DRAG_SENSITIVITY = Math.PI / 300;
@@ -115,6 +179,9 @@ export class MapWidget {
         this._rotate_drag = false;
         this._keysDown = new Set();
         this._zoom_anchor_screen = null;
+        this._wheel_state = { type: null };
+        this._wheel_last_time = 0;
+        this._wheel_grace_timer = null;
         this._touches = new Map();
         this._touch_gesture = null;
         // ZOOM-3: without this, browsers apply their own gesture handling (page pinch-zoom,
@@ -125,38 +192,96 @@ export class MapWidget {
         this.canvas.style.touchAction = 'none';
         let old_x = 0;
         let old_y = 0;
+        // ZOOM-12: a laptop trackpad never sends TouchEvents to the browser (ZOOM-3's
+        // touchstart/touchmove only ever hear from a real touchscreen) — every trackpad gesture
+        // arrives here as `wheel` (and, Safari only, the separate gesturestart/gesturechange/
+        // gestureend below). See BACKLOG.md's ZOOM-12 entry for the full design/citations.
         this.canvas.addEventListener('wheel', (e) => {
-            const dy = -e.deltaY;
-            if (dy === 0)
+            if (e.deltaX === 0 && e.deltaY === 0)
                 return;
-            // ZOOM-1: keep whatever's under the cursor fixed in place as the zoom eases in.
-            this._zoom_anchor_screen = { x: e.offsetX, y: e.offsetY };
-            // Scale the step by |deltaY| instead of always applying one fixed zoomIn()/zoomOut() step
-            // per event (the old behavior): a discrete mouse wheel sends one notch per event (~100 on
-            // most browsers/OSes — WHEEL_DELTA_PER_STEP calibrates to that, so a single notch still
-            // reproduces the old fixed zoom_step_factor step exactly), but a trackpad sends a dense
-            // stream of small, continuously-varying-magnitude events for one physical gesture — and
-            // its momentum/inertia tail routinely trails off into a handful of tiny, SIGN-NOISY events
-            // (e.g. -3, +2, -1, +1) as the gesture visually "stops". Treating every event as a full
-            // step regardless of magnitude turned that noise into full-sized zoomIn()/zoomOut() calls
-            // fired back-to-back in alternating directions — a real, visible zoom shake right as
-            // scrolling settles.
-            //
-            // ZOOM-9 follow-up: scaling *up* without a ceiling made things worse, not better — a real
-            // trackpad's deltaY during the active (non-tail) part of a gesture routinely reports
-            // magnitudes well above the ~100 "one mouse notch" reference (a fast swipe can spike into
-            // the several hundreds), so the naive `Math.pow(1 + step, dy / 100)` let a single event
-            // apply a multi-hundred-percent zoom jump — a much bigger, more visible shake than the old
-            // fixed 20% step ever produced, and no longer confined to the settling tail (any event with
-            // an outsized magnitude triggers it). Clamping |dy| to WHEEL_DELTA_PER_STEP before scaling
-            // keeps the proportional-for-small-noise behavior (fixes the original tail-shake) while
-            // capping the largest possible single-event step at exactly the old zoomIn()/zoomOut() size
-            // — a single event can now only ever do as much as the old code always did, never more.
-            const clamped_dy = Math.max(-WHEEL_DELTA_PER_STEP, Math.min(WHEEL_DELTA_PER_STEP, dy));
-            const multiplier = Math.pow(1 + this.zoom_step_factor, clamped_dy / WHEEL_DELTA_PER_STEP);
-            this.zoomBy(multiplier);
+            if (e.ctrlKey || e.metaKey) {
+                // Pinch-to-zoom (trackpad two-finger pinch, or a physical Ctrl+wheel) — the browser sets
+                // this flag specifically for that gesture (documented convention for canvas apps; Chrome
+                // since M35, Firefox since 55), so it never needs the device-classification heuristic
+                // below at all. Same zoom path a classified 'wheel' event uses (ZOOM-9/ZOOM-10),
+                // unchanged.
+                this._wheelZoom(e);
+                e.preventDefault();
+                return;
+            }
+            // ctrlKey/metaKey is false here — a real mouse-wheel notch and a trackpad two-finger swipe
+            // both report ctrlKey:false, so classifyWheelEvent's device-classification heuristic is
+            // what tells them apart (imperfectly, per real-world field experience — see BACKLOG.md's
+            // ZOOM-12 entry: this is an inherent Web Platform ambiguity, not a bug this eliminates).
+            const now = performance.now();
+            const result = classifyWheelEvent(e.deltaY, e.deltaMode, now, this._wheel_last_time, this._wheel_state);
+            this._wheel_state = result.state;
+            this._wheel_last_time = now;
+            if (result.startGraceTimer) {
+                // A new gesture just started and its type isn't knowable from timing alone yet — give it
+                // WHEEL_CLASSIFY_GRACE_MS to either resolve (a follow-up event arrives fast enough to
+                // classify by cadence) or, if nothing follows, default to 'wheel': a real mouse only ever
+                // sends one event per notch, so a lone event with no fast follow-up is far more likely a
+                // single click than the unwitnessed start of a trackpad stream.
+                if (this._wheel_grace_timer !== null)
+                    clearTimeout(this._wheel_grace_timer);
+                this._wheel_grace_timer = setTimeout(() => {
+                    if (this._wheel_state.type === null)
+                        this._wheel_state = { type: 'wheel' };
+                    this._wheel_grace_timer = null;
+                }, WHEEL_CLASSIFY_GRACE_MS);
+            }
+            else if (this._wheel_grace_timer !== null) {
+                // Classification resolved (or was already unambiguous) before the timer fired — nothing
+                // left for it to default.
+                clearTimeout(this._wheel_grace_timer);
+                this._wheel_grace_timer = null;
+            }
+            if (result.type === 'trackpad') {
+                this._wheelPan(e);
+            }
+            else {
+                // 'wheel', or still undecided (grace window) — default to the existing zoom behavior:
+                // safe for a real mouse (matches today, no regression) and the same bias mapbox itself
+                // uses for the undecided case.
+                this._wheelZoom(e);
+            }
             e.preventDefault();
         });
+        // ZOOM-12: two-finger trackpad *rotate* — Safari-only. Confirmed (BACKLOG.md's ZOOM-12
+        // entry, several independent sources): no standard, and no Chrome/Firefox-proprietary event
+        // either, exposes this gesture to JS at all — Safari's own nonstandard `gesturestart`/
+        // `gesturechange`/`gestureend` (`.rotation` in degrees, cumulative since gesturestart) are the
+        // only way any browser surfaces it. Feature-detected via `'ongesturestart' in window` rather
+        // than UA sniffing, so this stays entirely inert (no listeners attached, nothing to throw) in
+        // Chrome/Firefox, where these events never fire and `GestureEvent` doesn't even exist. This
+        // is the complete, final fix for the audience it's technically possible for — not a partial
+        // workaround pending a Chrome/Firefox equivalent that doesn't exist (see BACKLOG.md).
+        if ('ongesturestart' in window) {
+            let gestureLastRotation = 0;
+            this.canvas.addEventListener('gesturestart', (e) => {
+                gestureLastRotation = e.rotation;
+                e.preventDefault();
+            });
+            this.canvas.addEventListener('gesturechange', (e) => {
+                // `e.rotation` is cumulative degrees since gesturestart, not a per-event delta — take the
+                // delta since the last gesturechange, the same incremental style the touchmove handler
+                // below uses for its own two-finger angle (previous/current, not "since gesture start").
+                const deltaDegrees = e.rotation - gestureLastRotation;
+                gestureLastRotation = e.rotation;
+                // Sign: per WebKit's own documentation, positive `.rotation` is a clockwise two-finger
+                // turn. ZOOM-3's touch-rotate fix already established (by inspecting the actual
+                // gridMatrix produced, not by guessing) that a physical CLOCKWISE two-finger turn needs
+                // `rotation` to end up NEGATIVE for the map content to visibly turn clockwise on screen —
+                // same subtraction here, for the same reason, applied straight into `_drotation` (the
+                // same accumulator Shift+drag and touch-rotate already write into — see ROT-1/ZOOM-3).
+                this._drotation -= (deltaDegrees * Math.PI) / 180;
+                e.preventDefault();
+            });
+            this.canvas.addEventListener('gestureend', (e) => {
+                e.preventDefault();
+            });
+        }
         document.addEventListener('keydown', (e) => {
             // Don't steal keystrokes meant for a text field — e.g. typing into a dat.GUI number box
             // (this also fixes a pre-existing bug: typing a "-" into one would have triggered
@@ -571,6 +696,68 @@ export class MapWidget {
     worldToScreen(worldPoint) {
         const centered = this.camera.worldToLocal(worldPoint);
         return { x: centered.x + this.canvas.width / 2, y: centered.y + this.canvas.height / 2 };
+    }
+    // ZOOM-9/ZOOM-10/ZOOM-12: the wheel-driven zoom step, pulled out of the `wheel` listener so
+    // ZOOM-12's ctrlKey/pinch branch and its 'wheel'-classified branch can both reach it without
+    // duplicating the logic.
+    _wheelZoom(e) {
+        const dy = -e.deltaY;
+        if (dy === 0)
+            return;
+        // ZOOM-1: keep whatever's under the cursor fixed in place as the zoom eases in.
+        this._zoom_anchor_screen = { x: e.offsetX, y: e.offsetY };
+        // Scale the step by |deltaY| instead of always applying one fixed zoomIn()/zoomOut() step
+        // per event (the old behavior): a discrete mouse wheel sends one notch per event (~100 on
+        // most browsers/OSes — WHEEL_DELTA_PER_STEP calibrates to that, so a single notch still
+        // reproduces the old fixed zoom_step_factor step exactly), but a trackpad sends a dense
+        // stream of small, continuously-varying-magnitude events for one physical gesture — and
+        // its momentum/inertia tail routinely trails off into a handful of tiny, SIGN-NOISY events
+        // (e.g. -3, +2, -1, +1) as the gesture visually "stops". Treating every event as a full
+        // step regardless of magnitude turned that noise into full-sized zoomIn()/zoomOut() calls
+        // fired back-to-back in alternating directions — a real, visible zoom shake right as
+        // scrolling settles.
+        //
+        // ZOOM-9 follow-up: scaling *up* without a ceiling made things worse, not better — a real
+        // trackpad's deltaY during the active (non-tail) part of a gesture routinely reports
+        // magnitudes well above the ~100 "one mouse notch" reference (a fast swipe can spike into
+        // the several hundreds), so the naive `Math.pow(1 + step, dy / 100)` let a single event
+        // apply a multi-hundred-percent zoom jump — a much bigger, more visible shake than the old
+        // fixed 20% step ever produced, and no longer confined to the settling tail (any event with
+        // an outsized magnitude triggers it). Clamping |dy| to WHEEL_DELTA_PER_STEP before scaling
+        // keeps the proportional-for-small-noise behavior (fixes the original tail-shake) while
+        // capping the largest possible single-event step at exactly the old zoomIn()/zoomOut() size
+        // — a single event can now only ever do as much as the old code always did, never more.
+        const clamped_dy = Math.max(-WHEEL_DELTA_PER_STEP, Math.min(WHEEL_DELTA_PER_STEP, dy));
+        const multiplier = Math.pow(1 + this.zoom_step_factor, clamped_dy / WHEEL_DELTA_PER_STEP);
+        this.zoomBy(multiplier);
+    }
+    // ZOOM-12: trackpad two-finger swipe, classified by classifyWheelEvent — panned instead of
+    // zoomed (this project's own deliberate choice for canvas apps, the way Figma/tldraw treat a
+    // trackpad swipe, unlike mapbox-gl-js itself — mapbox only ever uses this same classification
+    // to pick a zoom *rate*, never to switch to panning). Routed through scroll() (ROT-6: already
+    // rotation-aware) with the same divide-by-zoom_factor convention `_dx`/`_dy` get everywhere
+    // else in this file (the mouse-drag drain and the WASD speed calc in onRepaint) before reaching
+    // it.
+    //
+    // Sign: deltaX/deltaY are applied directly, with NO extra negation — derived, not copied from
+    // an existing convention verbatim, but cross-checked against the mouse-drag pan below rather
+    // than guessed. A `wheel` event's deltaX/deltaY use the same convention as an ordinary page
+    // scroll: positive means "reveal more content in that direction" (scrolling down/right) — the
+    // same on-screen *effect* dragging the content up/left produces. That's exactly the existing
+    // mouse-drag pan's sign (see the mousemove handler above: dragging up, `e.pageY` decreasing,
+    // yields a positive `_dy`, which increases `c.y` — the same "reveal what's below" effect). So
+    // deltaX/deltaY need no sign flip here to match it — unlike the wheel-zoom path above, which
+    // does negate deltaY, but for the unrelated "scroll up = zoom in" map-UX convention, not pan
+    // direction.
+    //
+    // No inertia/velocity accumulation of our own here — deliberate, see BACKLOG.md's ZOOM-12
+    // entry: macOS/Windows Precision Touchpad momentum scroll already re-fires a naturally-decaying
+    // stream of `wheel` events after the fingers lift (`preventDefault()` doesn't stop them), so
+    // applying each classified event as an exact scroll() (the same "exact during contact"
+    // principle ZOOM-11 already established for touch/mouse-drag) already produces a natural
+    // flick-and-glide, without duplicating `_scroll_velocity`'s physics for a second input source.
+    _wheelPan(e) {
+        this.scroll(e.deltaX / this.zoom_factor, e.deltaY / this.zoom_factor);
     }
     zoomIn() {
         this.zoomBy(1 + this.zoom_step_factor);
