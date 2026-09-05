@@ -29,16 +29,50 @@ const tsStrava = new XYZTileSource({
     tile_size: 512,
     urlTemplate: (x, y, z) => `https://heatmap-external-a.strava.com/tiles/all/hot/${z}/${x}/${y}.png`
 });
-function drawTileDebug(map, ix, iy, iz, x, y, tsize) {
+// ROT-4 (debug layers): was broken the same way map_grid was — an axis-aligned ctx.rect(x, y,
+// tsize, tsize) (plus a second, smaller "shrunk" rect inside it) at the tile's precomputed
+// top-left corner, so the frame's *position* tracked the rotated camera but its *shape* never
+// did, coming out visibly "torn" at any nonzero rotation. Used by both xkcd_debug and map_debug
+// (`MapTilesDebug`) — same TiledLayer/onTileDraw machinery, same fix either way.
+function drawTileDebug(map, ix, iy, iz, x, y, tsize, _tile, gridMatrix) {
     const ctx = map.ctx;
     ctx.font = Math.round(tsize / 10) + 'px Arial'; // todo: font size calculate
     ctx.fillStyle = (this.options.textColor || this.options.color);
     ctx.textAlign = 'center';
+    if (gridMatrix) {
+        // Label the tile's actual on-screen center — its corners' midpoint transformed through the
+        // same per-layer matrix tileDraw() places the tile image with — not the old axis-aligned
+        // (x + tsize/2, y + tsize/2), correct only at rotation 0. The label itself is deliberately
+        // left unrotated (a "billboard": upright and readable at any map rotation) — only its
+        // *position* needs to track the tile.
+        const center = gridMatrix.transformPoint({ x: ix + 0.5, y: iy + 0.5 });
+        ctx.fillText('[' + ix + ', ' + iy + ']/' + iz, center.x, center.y);
+        // The tile's actual on-screen quadrilateral, drawn as one clean outline — see map_grid's
+        // onTileDraw (this file) for why the four corners are transformed ourselves and stroked
+        // directly, rather than via ctx.setTransform(gridMatrix): a stroke only ~1 device pixel wide
+        // silently fails to render at the huge tile-index coordinates deep zoom reaches (float32
+        // precision limit inside the canvas rasterizer's stroke geometry — see BACKLOG.md). No
+        // second "shrunk" inner rect here either — the old version's redundant second frame added
+        // nothing a human debugging tile boundaries actually needs.
+        const p00 = gridMatrix.transformPoint({ x: ix, y: iy });
+        const p10 = gridMatrix.transformPoint({ x: ix + 1, y: iy });
+        const p11 = gridMatrix.transformPoint({ x: ix + 1, y: iy + 1 });
+        const p01 = gridMatrix.transformPoint({ x: ix, y: iy + 1 });
+        ctx.beginPath();
+        ctx.strokeStyle = (this.options.frameColor || this.options.color);
+        ctx.moveTo(p00.x, p00.y);
+        ctx.lineTo(p10.x, p10.y);
+        ctx.lineTo(p11.x, p11.y);
+        ctx.lineTo(p01.x, p01.y);
+        ctx.closePath();
+        ctx.stroke();
+        return;
+    }
+    // Fallback (no matrix given, e.g. a direct call bypassing draw()) — old axis-aligned pixel-rect
+    // draw, only correct at rotation 0.
     ctx.fillText('[' + ix + ', ' + iy + ']/' + iz, x + tsize / 2, y + tsize / 2);
-    //ctx.fillText(""+Math.round(tsize), x + tsize / 2, y + tsize / 2 + 40);
     ctx.beginPath();
     ctx.strokeStyle = (this.options.frameColor || this.options.color);
-    ctx.rect(x + 10, y + 10, tsize - 20 - 1, tsize - 20 - 1);
     ctx.rect(x, y, tsize, tsize);
     ctx.stroke();
 }
