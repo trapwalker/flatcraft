@@ -55,6 +55,17 @@ export class TSCache extends TileSource {
   private _last_heating_state: string | null;
   private onBackgroundHeat: () => void;
 
+  // LOAD-8 (debug-overlay stats): cumulative, session-lifetime counters — unlike
+  // loaded_count/error_count/loading_count below (which scan `storage` and so only ever describe
+  // what's cached *right now*), these track totals across the whole page lifetime, surviving LRU
+  // eviction. Deliberately plain incrementing counters (not derived) since the events they count
+  // (a cache miss, a cache hit, a successful load, a prefetch candidate queued) aren't otherwise
+  // recoverable after the fact once older entries fall out of `storage`.
+  requested_count = 0; // get() calls that missed the cache and asked the underlying source for a tile
+  cache_hit_count = 0; // get() calls served straight from `storage`, no request to the source
+  received_count = 0; // tiles that finished loading successfully (see XYZTileSource.fetchTile)
+  prefetch_queued_count = 0; // tiles pushed onto load_queue by heat() (background-preload candidates)
+
   constructor(options: TileSourceOptions) {
     super(options);
     this.cache_limit = options.cache_limit || DEFAULT_CACHE_LIMIT;
@@ -102,6 +113,7 @@ export class TSCache extends TileSource {
     // until LOAD-1 wired heat() into the normal render loop: before that, nothing called it at
     // all (see BACKLOG.md's LOAD-1 note), so this path was simply never exercised.
     const callback = (ix: number, iy: number, iz: number): number => {
+      this.prefetch_queued_count++;
       return this.load_queue.push({ x: ix, y: iy, z: iz });
     };
 
@@ -154,6 +166,7 @@ export class TSCache extends TileSource {
     const key = x + ':' + y + ':' + z;
 
     if (this.storage.has(key)) {
+      this.cache_hit_count++;
       const tile = this.storage.get(key) as Tile | null;
       // Refresh recency: delete + re-set moves this key to the end of the Map's iteration
       // order, i.e. marks it most-recently-used.
@@ -162,6 +175,10 @@ export class TSCache extends TileSource {
       return tile;
     }
 
+    // Every miss means asking the underlying source (onGet/fetchTile) for this tile — counted
+    // here regardless of what comes back, since the request itself already happened by this
+    // point (see requested_count's doc comment).
+    this.requested_count++;
     const tile = super.get(x, y, z);
     if (tile !== undefined) {
       // Only Tile | null gets cached — `undefined` (no onGet configured, or onGet declining to
@@ -219,7 +236,7 @@ export class XYZTileSource extends TSCache {
     const attempt = (attemptIndex: number): void => {
       const img = new Image();
       tile.preparing_image = img;
-      img.onload = tile.makeReadyCallback();
+      img.onload = tile.makeReadyCallback(() => { this.received_count++; });
       img.onerror = () => {
         if (attemptIndex < this.maxRetries) {
           // Not cancelled if the tile falls out of view/gets evicted before it fires (see

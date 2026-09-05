@@ -106,11 +106,11 @@ function drawDebugInfo(this: Layer, map: MapWidget): void {
   const ctx = map.ctx;
   const w = map.canvas.width;
   const h = map.canvas.height;
-  // The full tile-counts line ("tiles(front): visible=... loading=... loaded=... error=...
-  // cached=...") measures ~580px at this font size — wider than any other debug line — so it's
-  // split across two fillText calls (see below) and needs more left margin than -420 gave it,
-  // which was still clipping "error=... cached=..." off the right edge of a 1280px-wide canvas.
-  const x = w - 520;
+  // The tile-stats lines (LOAD-8 — see below) are the widest in this block, ~490px at this font
+  // size with the counts this session happened to have — cumulative counters only grow, and
+  // `hits` in particular can reach into the millions over a long session, so this leaves more
+  // headroom than a snapshot measurement would justify literally.
+  const x = w - 560;
   const pos = new Vector(Math.round(map.c.x), Math.round(map.c.y));
   ctx.font = '20px Arial';
   ctx.fillStyle = this.options.color as string;
@@ -140,23 +140,42 @@ function drawDebugInfo(this: Layer, map: MapWidget): void {
   );
 
   // OSM/front layer specifically (per request — this is the layer that's actually visible by
-  // default): how many tile slots the current viewport covers, vs. how many of those are still
-  // mid-flight, already have an image, or gave up after retrying (SRC-4). `tsFront.cache_size`
-  // (loading+loaded+error, plus any confirmed-empty entries) is the total ever fetched, not just
-  // what's on screen right now — the two numbers differ once you've panned past tiles LOAD-5's
-  // LRU limit hasn't evicted yet.
-  // Two lines, topmost (h-100) first so "tiles(front): ..." reads as the label line above its
-  // continuation, matching the top-to-bottom reading order of the block.
+  // default), split into three lines by what kind of number each one is (per request: "сколько
+  // запрошено с сервера, сколько получено, сколько взято из кеша, сколько закешировано, сколько
+  // тайлов запрошено заранее, сколько тайлов в рамках экрана"):
+  //
+  //   - "screen"/"inflight"/"loaded"/"error" are *live* snapshots (scanned fresh off
+  //     `tsFront.storage`/`frontLayer` every frame — see their doc comments in tile_source.ts/
+  //     map.ts): what the current viewport covers and what state each of those tiles is in right
+  //     now.
+  //   - "cached"/"requested"/"received"/"hits" mix one live snapshot (`cache_size` — how many
+  //     distinct tiles LOAD-5's LRU is holding right now) with three *cumulative*,
+  //     session-lifetime counters (LOAD-8, tile_source.ts) that keep counting past LRU eviction:
+  //     total cache-miss requests fired at the source, total successful loads, and total get()
+  //     calls served straight from the cache without a new request.
+  //   - "prefetch"/"pending" are LOAD-1's background preloading: how many tiles have ever been
+  //     queued for it (cumulative) vs. how many are still waiting in `load_queue` right now
+  //     (live).
+  //
+  // Three lines, topmost (h-120) first, reading top-to-bottom the same order as this comment.
   const frontLayer = LAYERS.map_tiles_front as TiledLayer;
   ctx.fillText(
-    'tiles(front): visible=' + frontLayer.visible_tile_count
-    + ' loading=' + tsFront.loading_count,
+    'tiles(front): screen=' + frontLayer.visible_tile_count
+    + ' inflight=' + tsFront.loading_count
+    + ' loaded=' + tsFront.loaded_count
+    + ' error=' + tsFront.error_count,
+    x, h - 120
+  );
+  ctx.fillText(
+    'cached=' + tsFront.cache_size
+    + ' requested=' + tsFront.requested_count
+    + ' received=' + tsFront.received_count
+    + ' hits=' + tsFront.cache_hit_count,
     x, h - 100
   );
   ctx.fillText(
-    'loaded=' + tsFront.loaded_count
-    + ' error=' + tsFront.error_count
-    + ' cached=' + tsFront.cache_size,
+    'prefetch=' + tsFront.prefetch_queued_count
+    + ' pending=' + tsFront.load_queue.length,
     x, h - 80
   );
 }
