@@ -390,13 +390,19 @@ export class MapWidget { // todo: setup layers
   // recent position of the tracked touch, drained into zoomBy()/_drotation as an incremental delta
   // on every touchmove while 'active' (reset, not accumulated from `_zoom_rotate_start`, at the
   // moment the gesture crosses into 'active' — see the touchmove handler — so committing doesn't
-  // itself apply a jump-sized delta for the whole armed-phase wobble).
+  // itself apply a jump-sized delta for the whole armed-phase wobble). ZOOM-13 follow-up (axis
+  // lock, BACKLOG.md): `_zoom_rotate_axis` is decided once, at the same armed->active crossing
+  // that resets `_zoom_rotate_last` above, by comparing |dx|/|dy| of that one crossing move
+  // (ties go to 'zoom') — it then stays fixed for the rest of the gesture so the 'active' branch
+  // applies only that axis's effect, instead of re-deciding every frame (which would flicker
+  // near a 45-degree diagonal).
   private _tap_pending: PendingTap | null;
   private _single_touch_start: SingleTouchStart | null;
   private _zoom_rotate_state: 'armed' | 'active' | null;
   private _zoom_rotate_touch_id: number | null;
   private _zoom_rotate_start: XY;
   private _zoom_rotate_last: XY;
+  private _zoom_rotate_axis: 'zoom' | 'rotate' | null;
 
   constructor(container_id: string, options?: MapWidgetOptions) {
     this.fps_stat = new AvgRing(100);
@@ -476,6 +482,7 @@ export class MapWidget { // todo: setup layers
     this._zoom_rotate_touch_id = null;
     this._zoom_rotate_start = { x: 0, y: 0 };
     this._zoom_rotate_last = { x: 0, y: 0 };
+    this._zoom_rotate_axis = null;
 
     // ZOOM-3: without this, browsers apply their own gesture handling (page pinch-zoom,
     // scroll-by-touch, double-tap-to-zoom) to the canvas concurrently with ours — fighting each
@@ -727,6 +734,7 @@ export class MapWidget { // todo: setup layers
         // two-finger pan/pinch/rotate handling below completely unchanged.
         this._zoom_rotate_state = null;
         this._zoom_rotate_touch_id = null;
+        this._zoom_rotate_axis = null;
       }
 
       if (e.touches.length === 1) {
@@ -792,28 +800,41 @@ export class MapWidget { // todo: setup layers
               // armed-phase wobble (BACKLOG.md is explicit about this).
               this._zoom_rotate_state = 'active';
               this._zoom_rotate_last = pos;
+              // ZOOM-13 follow-up (BACKLOG.md, "не включались одновременно и вращение и
+              // масштабирование"): decide the axis once, right here, off THIS crossing move only
+              // (current position minus _zoom_rotate_start, not any later move) — whichever of
+              // |dx|/|dy| is larger wins, a tie goes to 'zoom'. Fixed for the rest of the gesture
+              // rather than re-decided every frame, so a diagonal move near 45 degrees doesn't
+              // flicker between zoom and rotate.
+              const crossDx = pos.x - this._zoom_rotate_start.x;
+              const crossDy = pos.y - this._zoom_rotate_start.y;
+              this._zoom_rotate_axis = Math.abs(crossDx) > Math.abs(crossDy) ? 'rotate' : 'zoom';
             }
           } else {
-            // 'active': both axes apply simultaneously and independently — no axis locking, per
-            // BACKLOG.md's own reasoning (a diagonal move zooms AND rotates at once).
+            // 'active': only the axis locked at the armed->active transition applies — the other
+            // axis's update is not called at all (not just zeroed/suppressed after computing it),
+            // per BACKLOG.md's follow-up.
             const last = this._zoom_rotate_last;
             const dy = pos.y - last.y;
             const dx = pos.x - last.x;
             this._zoom_rotate_last = pos;
 
-            if (dy !== 0) {
-              // Up (dy<0) = zoom in, down = zoom out — same sign as Google Maps' own one-finger
-              // double-tap-drag zoom (BACKLOG.md). `_zoom_anchor_screen` stays whatever it was set
-              // to at arm time (the second tap's position, fixed for the whole gesture) —
-              // zoomBy()/onRepaint's existing anchor-drift correction does the rest, same as
-              // pinch/wheel zoom.
-              this.zoomBy(Math.pow(2, -dy / ZOOM_DRAG_PX_PER_DOUBLING));
-            }
-            if (dx !== 0) {
-              // Same formula, same ROTATE_DRAG_SENSITIVITY, and the same sign convention as
-              // Shift+drag above (`old_x - new_x`, i.e. `last.x - pos.x` here) — reused verbatim
-              // rather than re-derived, per BACKLOG.md, so both inputs feel identical.
-              this._drotation += (last.x - pos.x) * ROTATE_DRAG_SENSITIVITY;
+            if (this._zoom_rotate_axis === 'zoom') {
+              if (dy !== 0) {
+                // Up (dy<0) = zoom in, down = zoom out — same sign as Google Maps' own one-finger
+                // double-tap-drag zoom (BACKLOG.md). `_zoom_anchor_screen` stays whatever it was
+                // set to at arm time (the second tap's position, fixed for the whole gesture) —
+                // zoomBy()/onRepaint's existing anchor-drift correction does the rest, same as
+                // pinch/wheel zoom.
+                this.zoomBy(Math.pow(2, -dy / ZOOM_DRAG_PX_PER_DOUBLING));
+              }
+            } else if (this._zoom_rotate_axis === 'rotate') {
+              if (dx !== 0) {
+                // Same formula, same ROTATE_DRAG_SENSITIVITY, and the same sign convention as
+                // Shift+drag above (`old_x - new_x`, i.e. `last.x - pos.x` here) — reused verbatim
+                // rather than re-derived, per BACKLOG.md, so both inputs feel identical.
+                this._drotation += (last.x - pos.x) * ROTATE_DRAG_SENSITIVITY;
+              }
             }
           }
         }
@@ -873,6 +894,7 @@ export class MapWidget { // todo: setup layers
             // armed the gesture at touchstart, see there).
             this._zoom_rotate_state = null;
             this._zoom_rotate_touch_id = null;
+            this._zoom_rotate_axis = null;
             break;
           }
         }
