@@ -125,12 +125,20 @@ export class MapWidget {
             // (e.g. -3, +2, -1, +1) as the gesture visually "stops". Treating every event as a full
             // step regardless of magnitude turned that noise into full-sized zoomIn()/zoomOut() calls
             // fired back-to-back in alternating directions — a real, visible zoom shake right as
-            // scrolling settles (reported on the OSM layer at max zoom, but the cause is
-            // device-input-general, not layer-specific). A proportional step makes a magnitude-2 noise
-            // event change the target by a fraction of a percent instead of the full
-            // zoom_step_factor (default 20%), so the noise stays imperceptible while a deliberate
-            // scroll (mouse notch or a real trackpad swipe) still feels the same as before.
-            const multiplier = Math.pow(1 + this.zoom_step_factor, dy / WHEEL_DELTA_PER_STEP);
+            // scrolling settles.
+            //
+            // ZOOM-9 follow-up: scaling *up* without a ceiling made things worse, not better — a real
+            // trackpad's deltaY during the active (non-tail) part of a gesture routinely reports
+            // magnitudes well above the ~100 "one mouse notch" reference (a fast swipe can spike into
+            // the several hundreds), so the naive `Math.pow(1 + step, dy / 100)` let a single event
+            // apply a multi-hundred-percent zoom jump — a much bigger, more visible shake than the old
+            // fixed 20% step ever produced, and no longer confined to the settling tail (any event with
+            // an outsized magnitude triggers it). Clamping |dy| to WHEEL_DELTA_PER_STEP before scaling
+            // keeps the proportional-for-small-noise behavior (fixes the original tail-shake) while
+            // capping the largest possible single-event step at exactly the old zoomIn()/zoomOut() size
+            // — a single event can now only ever do as much as the old code always did, never more.
+            const clamped_dy = Math.max(-WHEEL_DELTA_PER_STEP, Math.min(WHEEL_DELTA_PER_STEP, dy));
+            const multiplier = Math.pow(1 + this.zoom_step_factor, clamped_dy / WHEEL_DELTA_PER_STEP);
             this.zoomBy(multiplier);
             e.preventDefault();
         });
@@ -496,47 +504,78 @@ export class TiledLayer extends Layer {
         this.onTileDraw = options && options.onTileDraw; // function(ix, iy, x, y, tile)
         this.z_max = options && options.z_max;
     }
-    getLevelParams(position, zf, w, h) {
+    getLevelParams(map, w, h) {
+        const zf = map.zoom_factor;
         const z = Math.ceil(Math.log2(zf));
         const k = zf / Math.pow(2, z);
         const tile_size = this.tile_size * k;
         const world_tile_edge = this.tile_size / Math.pow(2, z);
-        // Tile index range: still computed as if this layer's transform were the identity (shift 0,
-        // scale 1) — a layer with a large custom shift/scale may not get perfectly tight tile
-        // coverage from this heuristic (could show a gap at an edge, or fetch a few unneeded tiles),
-        // though tiles that ARE drawn always land in the mathematically correct place regardless
-        // (that part goes through computeTileGridMatrix, which does account for the layer's
-        // transform). Properly accounting for shift/scale/rotation here means projecting the
-        // canvas's four corners through the inverse layer matrix — the same technique ROT-3 needs
-        // for a rotated viewport — not worth doing twice; left for whichever of AFF-4/ROT-3 gets
-        // there first in practice.
-        const c = position.clone().mul(zf);
+        // AFF-4: one matrix for the whole layer this frame, replacing the old per-tile
+        // `x*tile_size - c.x + w/2` arithmetic — see computeTileGridMatrix.
+        const gridMatrix = computeTileGridMatrix(map.camera, this.transform, w, h, world_tile_edge);
+        // ROT-3: the tile index range used to be derived as if the canvas were an axis-aligned,
+        // unrotated rectangle in tile-index space (center from `position`, half-extents from
+        // w/h/tile_size) — correct only at rotation 0. Once the camera is rotated, the actual
+        // world-space area the canvas covers is a *rotated* rectangle; its axis-aligned bounding box
+        // in tile-index space is wider/taller than the unrotated canvas (by up to sqrt(2) at 45°), so
+        // the old dx/dy under-covered it — tiles (and grid lines) near the canvas corners were never
+        // fetched or drawn, and the visible gap swings around as the rotation changes. Fixed by
+        // projecting the canvas's four actual corners through the inverse of the very same
+        // gridMatrix used below to place tiles (so this is guaranteed consistent with what actually
+        // gets drawn, camera *and* this layer's own transform included) and taking the bounding box
+        // of the results in tile-index space, instead of assuming an identity transform.
+        const inv = gridMatrix.invert();
+        const corners = [
+            inv.transformPoint({ x: 0, y: 0 }),
+            inv.transformPoint({ x: w, y: 0 }),
+            inv.transformPoint({ x: 0, y: h }),
+            inv.transformPoint({ x: w, y: h })
+        ];
+        let minX = corners[0].x, maxX = corners[0].x;
+        let minY = corners[0].y, maxY = corners[0].y;
+        for (let i = 1; i < corners.length; i++) {
+            if (corners[i].x < minX)
+                minX = corners[i].x;
+            if (corners[i].x > maxX)
+                maxX = corners[i].x;
+            if (corners[i].y < minY)
+                minY = corners[i].y;
+            if (corners[i].y > maxY)
+                maxY = corners[i].y;
+        }
+        // +1 tile of padding beyond the tight bounding box: the corners essentially never land
+        // exactly on a tile boundary, so without this, a corner tile that only partially overlaps
+        // the canvas (its index just past the ceil()/floor() cut) would be skipped, leaving a sliver
+        // gap right at the edge — visible as missing tiles precisely where ROT-3 matters most.
+        const tx = Math.round((minX + maxX) / 2);
+        const ty = Math.round((minY + maxY) / 2);
+        const dx = Math.ceil((maxX - minX) / 2) + 1;
+        const dy = Math.ceil((maxY - minY) / 2) + 1;
         return {
             z: z + (this.z_max || 0),
             k,
             tile_size,
             world_tile_edge,
-            tx: Math.floor(c.x / tile_size),
-            ty: Math.floor(c.y / tile_size),
-            dx: Math.ceil(w / tile_size / 2),
-            dy: Math.ceil(h / tile_size / 2)
+            tx,
+            ty,
+            dx,
+            dy,
+            gridMatrix
         };
     }
     draw(map) {
         super.draw(map);
         const w = map.canvas.width; // todo: use property
         const h = map.canvas.height;
-        const level_params = this.getLevelParams(map.c, map.zoom_factor, w, h);
+        const level_params = this.getLevelParams(map, w, h);
         const z = level_params.z;
         const tile_size = level_params.tile_size;
         const tx = level_params.tx;
         const ty = level_params.ty;
         const dx = level_params.dx;
         const dy = level_params.dy;
+        const gridMatrix = level_params.gridMatrix;
         this.visible_tile_count = (2 * dx + 1) * (2 * dy + 1);
-        // AFF-4: one matrix for the whole layer this frame, replacing the old per-tile
-        // `x*tile_size - c.x + w/2` arithmetic — see computeTileGridMatrix.
-        const gridMatrix = computeTileGridMatrix(map.camera, this.transform, w, h, level_params.world_tile_edge);
         for (let y = ty - dy; y <= ty + dy; y++) {
             for (let x = tx - dx; x <= tx + dx; x++) {
                 const topLeft = gridMatrix.transformPoint({ x, y });
@@ -579,7 +618,7 @@ export class TiledLayer extends Layer {
             }
         }
         if (this.onTileDraw)
-            this.onTileDraw(map, ix, iy, iz, x, y, tsize, tile);
+            this.onTileDraw(map, ix, iy, iz, x, y, tsize, tile, gridMatrix);
     }
 }
 //# sourceMappingURL=map.js.map
