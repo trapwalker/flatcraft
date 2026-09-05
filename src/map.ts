@@ -90,6 +90,17 @@ export interface MapWidgetOptions {
   rotateRightHoldKeys?: string[];
 }
 
+// TOUCH-1: the subset of a multi-touch gesture's geometry the touchmove handler needs from one
+// event to the next — see MapWidget._touchGestureState()/_touches.
+interface TouchGestureState {
+  count: number;
+  centroid: XY; // average of every active touch's position — drives panning, any touch count
+  // distance/angle are only meaningful (and only read) when count === 2 — see the touchmove
+  // handler's own gating.
+  distance: number;
+  angle: number;
+}
+
 export class MapWidget { // todo: setup layers
   fps_stat: AvgRing;
   dt_stat: AvgRing;
@@ -159,7 +170,9 @@ export class MapWidget { // todo: setup layers
   private _drotation: number;
   private _rotate_drag: boolean;
   // Continuous-hold navigation: which of the tracked keys are currently down, checked every
-  // frame in onRepaint rather than acted on once per keydown. Stores KeyboardEvent.key.toLowerCase().
+  // frame in onRepaint rather than acted on once per keydown. Stores KeyboardEvent.code (KEY-1 —
+  // the physical key, unaffected by keyboard layout/language; see the DEFAULT_PAN_*/
+  // DEFAULT_*_HOLD_KEYS comment near the top of this file).
   private _keysDown: Set<string>;
   private t?: number;
   // ZOOM-1: screen point (canvas pixel coords) that a zoom gesture should keep fixed in place
@@ -167,6 +180,19 @@ export class MapWidget { // todo: setup layers
   // end. Set by the wheel handler to the cursor position; cleared (-> zoom around center) by
   // the keyboard shortcuts, which have no cursor position to anchor to.
   private _zoom_anchor_screen: XY | null;
+  // TOUCH-1: canvas-local position of every currently active touch, keyed by
+  // Touch.identifier (stable for the lifetime of that contact, unlike array index). Rebuilt
+  // wholesale from the event's own touch list on every touchstart/touchmove/touchend — see
+  // the handlers below — rather than patched incrementally, so it can never drift out of sync
+  // with a missed or reordered event.
+  private _touches: Map<number, XY>;
+  // Snapshot of _touches reduced to what a gesture actually needs (see _touchGestureState) —
+  // compared against the next touchmove's snapshot to get a *delta* (pan/scale/rotation since
+  // the last event), the same incremental style the mouse-drag handlers use with old_x/old_y,
+  // rather than tracking a fixed baseline from gesture start (which would drift as fingers are
+  // added/removed mid-gesture). Reset (to a fresh snapshot of whatever touches remain) on every
+  // touchstart/touchend so a finger being added or lifted never produces a spurious jump.
+  private _touch_gesture: TouchGestureState | null;
 
   constructor(container_id: string, options?: MapWidgetOptions) {
     this.fps_stat = new AvgRing(100);
@@ -235,6 +261,15 @@ export class MapWidget { // todo: setup layers
     this._rotate_drag = false;
     this._keysDown = new Set();
     this._zoom_anchor_screen = null;
+    this._touches = new Map();
+    this._touch_gesture = null;
+
+    // TOUCH-1: without this, browsers apply their own gesture handling (page pinch-zoom,
+    // scroll-by-touch, double-tap-to-zoom) to the canvas concurrently with ours — fighting each
+    // other and, on some browsers, delaying or suppressing the touch events below entirely until
+    // that gesture is resolved. `e.preventDefault()` in the handlers is the actual mechanism;
+    // this is the CSS-level hint recommended alongside it.
+    this.canvas.style.touchAction = 'none';
 
     let old_x = 0;
     let old_y = 0;
@@ -363,6 +398,104 @@ export class MapWidget { // todo: setup layers
       this._mouse_move_flag = 0;
       this._rotate_drag = false;
     });
+
+    // TOUCH-1: one finger pans; two fingers pan+pinch-zoom+rotate simultaneously (the standard
+    // mobile-map gesture set — Google/Apple/Leaflet all do the same three-in-one on two touches).
+    // Reuses the existing pan/zoom/rotate machinery rather than duplicating it: pan goes through
+    // the same `_dx`/`_dy` accumulator (and so the same scrollType/inertia handling) mouse-drag
+    // uses, pinch through the same `zoomBy()` + `_zoom_anchor_screen` the wheel handler uses, and
+    // twist through the same `_drotation` accumulator Shift+drag uses.
+    const touchPoint = (t: Touch): XY => {
+      // Touch (unlike MouseEvent) has no offsetX/offsetY — the canvas's own bounding rect is the
+      // only way to get canvas-local coordinates from its page-relative clientX/clientY.
+      const rect = this.canvas.getBoundingClientRect();
+      return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+    };
+
+    // Rebuilds `_touches` wholesale from `touches` (a TouchList — e.touches on every touch event
+    // type) rather than patching it incrementally, so a missed or out-of-order event can't leave
+    // it stale; see _touches's own doc comment.
+    const syncTouches = (touches: TouchList): void => {
+      this._touches.clear();
+      for (let i = 0; i < touches.length; i++) {
+        const t = touches[i];
+        this._touches.set(t.identifier, touchPoint(t));
+      }
+    };
+
+    // Centroid (pan reference, any touch count) plus, for exactly two touches, the distance and
+    // angle between them (pinch-zoom/twist reference) — see TouchGestureState's own doc comment
+    // on why only the reduced snapshot is kept rather than the raw touch list.
+    const touchGestureState = (): TouchGestureState | null => {
+      const points = Array.from(this._touches.values());
+      if (points.length === 0) return null;
+      let cx = 0, cy = 0;
+      for (const p of points) { cx += p.x; cy += p.y; }
+      cx /= points.length;
+      cy /= points.length;
+      let distance = 0;
+      let angle = 0;
+      if (points.length === 2) {
+        const [a, b] = points;
+        distance = Math.hypot(b.x - a.x, b.y - a.y);
+        angle = Math.atan2(b.y - a.y, b.x - a.x);
+      }
+      return { count: points.length, centroid: { x: cx, y: cy }, distance, angle };
+    };
+
+    this.canvas.addEventListener('touchstart', (e: TouchEvent) => {
+      e.preventDefault();
+      syncTouches(e.touches);
+      // Fresh baseline for the next touchmove's delta — see _touch_gesture's own doc comment on
+      // why a finger being added mid-gesture must not produce a jump against a stale one.
+      this._touch_gesture = touchGestureState();
+      this._mouse_move_flag = 1;
+      this._mouse_down_flag = 1;
+    }, { passive: false });
+
+    this.canvas.addEventListener('touchmove', (e: TouchEvent) => {
+      e.preventDefault();
+      const previous = this._touch_gesture;
+      syncTouches(e.touches);
+      const current = touchGestureState();
+
+      if (previous && current) {
+        // Pan: same delta convention as the mousemove handler above (old position minus new,
+        // accumulated into _dx/_dy and drained every frame in onRepaint) — works for any touch
+        // count, including a mid-gesture change (e.g. lifting one of two fingers), since it's
+        // always just "how far did the centroid move since the last event".
+        this._dx += previous.centroid.x - current.centroid.x;
+        this._dy += previous.centroid.y - current.centroid.y;
+
+        if (previous.count === 2 && current.count === 2 && previous.distance > 0) {
+          // Pinch-zoom, anchored at the pinch midpoint (same idea as the wheel handler's cursor
+          // anchor) so whatever's between the fingers stays there as the zoom eases in.
+          this._zoom_anchor_screen = current.centroid;
+          this.zoomBy(current.distance / previous.distance);
+
+          // Two-finger twist, applied directly into `_drotation` (immediate/un-eased, like
+          // Shift+drag) rather than easing towards a target the way the discrete [/] keys do.
+          // atan2's result wraps at +-PI, so a naive subtraction would jump by ~2*PI right as the
+          // fingers' relative angle crosses that boundary — normalized back into (-PI, PI] via
+          // atan2(sin(d), cos(d)), the standard trick for a correct *shortest* angular delta.
+          const rawDelta = current.angle - previous.angle;
+          this._drotation += Math.atan2(Math.sin(rawDelta), Math.cos(rawDelta));
+        }
+      }
+
+      this._touch_gesture = current;
+    }, { passive: false });
+
+    const onTouchEnd = (e: TouchEvent): void => {
+      e.preventDefault();
+      syncTouches(e.touches);
+      // Fresh baseline again (see touchstart) — covers going from two fingers down to one (keeps
+      // panning, cleanly drops pinch/twist) as well as the last finger lifting.
+      this._touch_gesture = touchGestureState();
+      if (this._touches.size === 0) this._mouse_move_flag = 0;
+    };
+    this.canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+    this.canvas.addEventListener('touchcancel', onTouchEnd, { passive: false });
 
     window.onresize = this.onResize_callback;
     // todo: Попробовать повесить событие на ресайз контейнера а не окна. Убедиться, что не затёрли старый обработчик ресайза.
