@@ -7,6 +7,7 @@ import { load_tree, leafFunction } from './tile_tree.js';
 import { XYZTileSource, StaticCanvasTileSource } from './tile_source.js';
 import { Layer, TiledLayer } from './map.js';
 import type { MapWidget } from './map.js';
+import type { Mat2D } from './mat2d.js';
 
 // SRC-2: retry-with-backoff (SRC-4) and the URL-template pattern now live in XYZTileSource
 // (src/tile_source.ts) — generalized out of what used to be a layers.ts-local `makeTileGetter`,
@@ -202,12 +203,76 @@ export const LAYERS: Record<string, Layer> = {
     color: 'rgba(60, 110, 60, 0.4)',
     visible: true,
     z_max: 18, // todo: rename to z_deep
-    onTileDraw: function (this: TiledLayer, map: MapWidget, ix: number, iy: number, iz: number, x: number, y: number, tsize: number): void {
+    onTileDraw: function (
+      this: TiledLayer,
+      map: MapWidget,
+      ix: number,
+      iy: number,
+      iz: number,
+      x: number,
+      y: number,
+      tsize: number,
+      _tile: unknown,
+      gridMatrix?: Mat2D
+    ): void {
       const k = (tsize - 128) / 128;
       //k *= k;
       const color = this.options.color as string;
-
       const ctx = map.ctx;
+
+      // ROT-4: stroke the tile's actual on-screen quadrilateral — its corners transformed
+      // through the same per-layer matrix tileDraw() places the tile image with — instead of an
+      // axis-aligned pixel rect at the precomputed top-left corner. The old code's rect always
+      // kept its own edges screen-axis-aligned even though its position moved with the rotated
+      // camera, so at any nonzero rotation the grid came out "torn" (each cell a straight
+      // square, the sheet as a whole not actually rotating), unlike the tile images next to it,
+      // which already rotate as one rigid sheet.
+      //
+      // Deliberately NOT drawn the way tileDraw() draws the image itself (ctx.setTransform to
+      // gridMatrix, then a unit square in tile-index units) — tried first, and it silently drew
+      // nothing at deep zoom. Reason (confirmed empirically: a several-unit-wide stroke rendered
+      // fine through that transform, a ~1px one didn't): tile-index coordinates at z~18 are
+      // ~10^5-10^6, and a stroke only ~1 device pixel wide needs a local-space half-width far
+      // smaller than a float32's precision at that magnitude to build its outline — the offset
+      // rounds away to nothing and the stroke geometry collapses. Transforming the corner points
+      // ourselves (below) keeps every coordinate that reaches the rasterizer in ordinary
+      // screen-pixel magnitudes, sidestepping the problem entirely. gridMatrix is only absent for
+      // a direct tileDraw() call that bypasses draw() (none exist in this codebase today) — the
+      // pixel-rect fallback below covers that case so this doesn't silently draw nothing either.
+      if (gridMatrix) {
+        const p00 = gridMatrix.transformPoint({ x: ix, y: iy });
+        const p10 = gridMatrix.transformPoint({ x: ix + 1, y: iy });
+        const p11 = gridMatrix.transformPoint({ x: ix + 1, y: iy + 1 });
+        const p01 = gridMatrix.transformPoint({ x: ix, y: iy + 1 });
+        const pTop = gridMatrix.transformPoint({ x: ix + 0.5, y: iy });
+        const pBottom = gridMatrix.transformPoint({ x: ix + 0.5, y: iy + 1 });
+        const pLeft = gridMatrix.transformPoint({ x: ix, y: iy + 0.5 });
+        const pRight = gridMatrix.transformPoint({ x: ix + 1, y: iy + 0.5 });
+
+        // Inner 2x2 subdivision (the old four half-size rects, minus their outer edges — those
+        // coincide exactly with the full-cell border drawn below, so drawing them again here
+        // would just be redundant overlapping strokes): one cross through the cell's center.
+        ctx.save();
+        ctx.globalAlpha = k;
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.moveTo(pTop.x, pTop.y);
+        ctx.lineTo(pBottom.x, pBottom.y);
+        ctx.moveTo(pLeft.x, pLeft.y);
+        ctx.lineTo(pRight.x, pRight.y);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.moveTo(p00.x, p00.y);
+        ctx.lineTo(p10.x, p10.y);
+        ctx.lineTo(p11.x, p11.y);
+        ctx.lineTo(p01.x, p01.y);
+        ctx.closePath();
+        ctx.stroke();
+        return;
+      }
 
       ctx.save();
       ctx.globalAlpha = k;
