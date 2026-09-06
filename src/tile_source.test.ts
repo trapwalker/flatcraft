@@ -204,13 +204,20 @@ describe('DownsampledTileSource (SRC-8) compositing', () => {
     [2, 4], // z0-z=2 -> reduce by 4x
     [3, 8], // z0-z=3 -> reduce by 8x
     [4, 16] // z0-z=4 -> reduce by 16x
-  ])('z0-z=%i (reduce by %ix): draws exactly n*n sub-tiles from index range x*n..x*n+n-1', (delta, n) => {
+  ])('z0-z=%i (reduce by %ix): recursion still touches exactly n*n distinct native tiles, from index range x*n..x*n+n-1 (SRC-9)', (delta, n) => {
     const z0 = 10;
     const { source, calls } = countingNativeSource((x, y, z) => readyTile(x, y, z));
     const downsampled = new DownsampledTileSource({ tile_size: 512, source, z0 });
 
     const tile = downsampled.get(3, 5, z0 - delta);
 
+    // SRC-9: buildTile now recurses through this.get() one level at a time (exactly 4 sub-results
+    // per call) instead of asking `source` directly for n*n tiles in one flat loop — but since a
+    // full-detail composite genuinely needs data from every native leaf in its subtree, and (on
+    // this first, cold-cache build) nothing is cached yet, the *total* number of distinct native
+    // tiles touched is unchanged: still exactly n*n, still from the same index range. What SRC-9
+    // actually changes is covered below (the composite's own draw count, and the caching tests
+    // further down: repeat/overlapping requests no longer re-touch already-built levels).
     expect(calls).toHaveLength(n * n);
     // Every call must be at the native level z0, and its x/y must fall in the expected range.
     for (const [cx, cy, cz] of calls) {
@@ -224,11 +231,13 @@ describe('DownsampledTileSource (SRC-8) compositing', () => {
     const seen = new Set(calls.map(([cx, cy]) => `${cx}:${cy}`));
     expect(seen.size).toBe(n * n);
 
-    // The composite itself: one canvas, one drawImage call per sub-tile, each into its own
-    // 1/n-sized quadrant (tile_size / n on a side).
+    // The TOP-level composite itself now always draws exactly 4 sub-images (one per quadrant of
+    // the adjacent finer level z+1), regardless of n — never up to n*n the way SRC-8's flat version
+    // did. For delta=1 (n=2) those 4 sub-images happen to be the native tiles themselves; for
+    // delta>1 they're themselves composites built by the same recursion one level down.
     const image = (tile as Tile).image as unknown as FakeCanvas;
-    const sub = 512 / n;
-    expect(image.ctx.drawCalls).toHaveLength(n * n);
+    const sub = 512 / 2;
+    expect(image.ctx.drawCalls).toHaveLength(4);
     for (const call of image.ctx.drawCalls) {
       expect(call.dw).toBe(sub);
       expect(call.dh).toBe(sub);
@@ -264,28 +273,55 @@ describe('DownsampledTileSource (SRC-8) compositing', () => {
     expect(second).toBe(first); // same cached Tile instance
   });
 
-  it('an async/pending sub-tile defers the whole composite: returns undefined and does not cache', () => {
+  it('an async/pending sub-tile defers the whole composite: returns undefined until every quadrant is ready', () => {
     const z0 = 10;
     let ready = false;
-    // Mimics XYZTileSource: get() always returns a Tile immediately, but it only carries `image`
-    // once "loaded" — before that it's the 'prepare' state DownsampledTileSource must recognize as
-    // not-yet-final.
-    const { source, calls } = countingNativeSource((x, y, z) =>
-      ready ? readyTile(x, y, z) : new Tile(x, y, z, { state: 'prepare' })
-    );
+    // Mimics XYZTileSource faithfully: ONE stable Tile instance per key, created once and mutated
+    // in place as it "loads" (a real async source's onload callback fires on that same object
+    // whenever the network request finishes, regardless of how many times get() is called for it
+    // meanwhile) — not a fresh object returned every call. This matters under SRC-9: the native
+    // passthrough now also routes through this.get() (the wrapper's own cache), so a still-pending
+    // tile can be served straight from the wrapper's cache on a retry without re-invoking `source`
+    // at all — correct only if that cached reference is the SAME object that eventually gets
+    // mutated to ready, exactly as a real XYZTileSource guarantees (see Tile.makeReadyCallback).
+    const tiles = new Map<string, Tile>();
+    const { source, calls } = countingNativeSource((x, y, z) => {
+      const key = `${x}:${y}:${z}`;
+      let tile = tiles.get(key);
+      if (!tile) {
+        tile = ready ? readyTile(x, y, z) : new Tile(x, y, z, { state: 'prepare' });
+        tiles.set(key, tile);
+      }
+      return tile;
+    });
     const downsampled = new DownsampledTileSource({ tile_size: 256, source, z0 });
 
-    const whilePending = downsampled.get(0, 0, z0 - 1); // n=2 -> 4 sub-tiles, none ready yet
+    // n=2 -> 4 sub-tiles, but the loop short-circuits on the first one still pending (unchanged
+    // convention from SRC-8) — only (0,0,z0) gets asked for at all this round.
+    const whilePending = downsampled.get(0, 0, z0 - 1);
     expect(whilePending).toBeUndefined();
-    expect(downsampled.cache_size).toBe(0); // undefined must never be cached (see TSCache.get())
+    expect(calls).toHaveLength(1);
+    // SRC-9: the still-pending (0,0,z0) tile is cached at the wrapper level too (uniform this.get()
+    // recursion, native passthrough included) even though the outer z0-1 composite itself is not
+    // (undefined is never cached — see TSCache.get()'s comment).
+    expect(downsampled.cache_size).toBe(1);
 
     ready = true;
+    // The first quadrant's "network request" finishes — mutates the SAME cached Tile instance in
+    // place, exactly like a real onload callback would.
+    const firstTile = tiles.get(`0:0:${z0}`) as Tile;
+    firstTile.image = { marker: `0:0:${z0}` } as unknown as CanvasImageSource;
+    firstTile.state = 'ready';
+
     calls.length = 0;
-    const onceReady = downsampled.get(0, 0, z0 - 1); // retried — same source, now returns real images
+    const onceReady = downsampled.get(0, 0, z0 - 1); // retried
     expect(onceReady).not.toBeUndefined();
     expect(onceReady).not.toBeNull();
-    expect(calls).toHaveLength(4); // re-asked all 4 sub-tiles — cheap, no caching was skipped for real
-    expect(downsampled.cache_size).toBe(1); // now cached, since this answer was final
+    // (0,0) is served straight from the wrapper's own cache (no new call to `source`); the other 3
+    // quadrants are asked for the first time now and come back ready immediately, since `ready` was
+    // already flipped by the time they're first created.
+    expect(calls).toHaveLength(3);
+    expect(downsampled.cache_size).toBe(5); // the 4 now-ready quadrants, plus the composite itself
   });
 
   it('a confirmed load error on a sub-tile is treated as final (blank quadrant), not pending', () => {
@@ -308,6 +344,72 @@ describe('DownsampledTileSource (SRC-8) compositing', () => {
     const downsampled = new DownsampledTileSource({ tile_size: 256, source, z0 });
 
     expect(downsampled.get(0, 0, z0 - 2)).toBeNull();
-    expect(downsampled.cache_size).toBe(1); // a definitive "no data" answer, cached like any other null
+    // SRC-9: the recursion goes through this.get() uniformly at every level, including the native
+    // passthrough at z0 — so cache_size now reflects everything it touched along the way: 16 native
+    // (z0) leaves it asked `source` for, each individually cached in the wrapper's own storage too
+    // (see the note in the "deep composite" test below for why that's harmless), + 4 z0-1
+    // intermediate composites + 1 top (z0-2) composite = 21. Under SRC-8's flat, single-level build
+    // this was just 1 (only the top composite was ever cached).
+    expect(downsampled.cache_size).toBe(21);
+  });
+
+  describe('SRC-9: recursive mip-chain caching reduces repeated native decodes', () => {
+    it('a deep (÷16) composite also caches every intermediate level it touches along the way', () => {
+      const z0 = 10;
+      const { source, calls } = countingNativeSource((x, y, z) => readyTile(x, y, z));
+      const downsampled = new DownsampledTileSource({ tile_size: 256, source, z0 });
+
+      downsampled.get(0, 0, z0 - 4); // ÷16: n=16 -> 256 native leaves
+
+      expect(calls).toHaveLength(256); // cold cache: every native leaf still has to be decoded once
+      // ...but building it also populates the cache with every level it recursed through, not just
+      // the top composite: the 256 individual native (z0) tiles it fetched via the recursive
+      // this.get() (each also cached at the wrapper level alongside `source`'s own cache — harmless
+      // duplication for a well-behaved async source, since it's the same Tile reference in both,
+      // mutated in place as it loads) + 64 (z0-1) + 16 (z0-2) + 4 (z0-3) intermediate composites + 1
+      // top (z0-4) = 341 entries total, every one reusable by a later request that shares part of
+      // this subtree. Under SRC-8's flat, single-level build only the single top composite was ever
+      // cached (native fetches went straight to `source`, bypassing the wrapper's own cache).
+      expect(downsampled.cache_size).toBe(341);
+    });
+
+    it('a later, deeper build over an already-partially-visited area needs far fewer new native calls', () => {
+      const z0 = 10;
+      const { source, calls } = countingNativeSource((x, y, z) => readyTile(x, y, z));
+      const downsampled = new DownsampledTileSource({ tile_size: 256, source, z0 });
+
+      // Visit one ÷8 quadrant of the eventual ÷16 tile's area first (e.g. the user briefly viewed
+      // this spot at a shallower zoom before zooming out further) — costs its own full n*n=64
+      // native calls, but also caches its complete z0-2/z0-1 sub-chain.
+      downsampled.get(0, 0, z0 - 3);
+      expect(calls).toHaveLength(64);
+
+      calls.length = 0; // count only NEW calls made by the deeper build below
+      downsampled.get(0, 0, z0 - 4); // ÷16 parent of the ÷8 tile just built — shares that whole quadrant
+
+      // A fully cold ÷16 build needs 256 native calls (n*n, n=16). One of its 4 top-level quadrants
+      // — exactly the ÷8 tile already built above — is now served entirely from cache, so this
+      // build only needs the other 3 quadrants' worth: 3 * 64 = 192, far fewer than a cold 256 and
+      // nowhere near growing linearly with unrelated prior composites the way SRC-8's flat version
+      // would have (which never reused anything across separate get() calls to begin with).
+      expect(calls).toHaveLength(192);
+      expect(calls.length).toBeLessThan(256);
+    });
+
+    it('requesting the exact same composite again afterward is a pure cache hit, whether built directly or reached earlier only as an intermediate', () => {
+      const z0 = 10;
+      const { source, calls } = countingNativeSource((x, y, z) => readyTile(x, y, z));
+      const downsampled = new DownsampledTileSource({ tile_size: 256, source, z0 });
+
+      downsampled.get(0, 0, z0 - 4); // builds the full chain, including (0,0,z0-1) as an intermediate
+      calls.length = 0;
+
+      // (0,0, z0-1) was never requested directly — only reached as an intermediate while building
+      // the ÷16 tile above — yet it's fully cached under its own key, so asking for it now costs
+      // zero further native calls.
+      const intermediate = downsampled.get(0, 0, z0 - 1);
+      expect(intermediate).not.toBeUndefined();
+      expect(calls).toHaveLength(0);
+    });
   });
 });

@@ -235,45 +235,43 @@ export class DownsampledTileSource extends TSCache {
     buildTile(x, y, z) {
         if (z >= this.z0)
             return this.source.get(x, y, z); // native-or-finer: unchanged passthrough
-        // Zoomed out past native resolution: composite n x n native tiles into one tile_size x
-        // tile_size canvas, each scaled down into its 1/n-sized quadrant. n = 2^(z0-z) and the native
-        // index range is x*n..x*n+n-1 (same for y) — the standard doubling tile-pyramid relationship,
-        // the same one XYZ/slippy schemes use between adjacent zoom levels.
-        const n = Math.pow(2, this.z0 - z);
-        const sub = this.tile_size / n;
-        // Async-source strategy (spelled out here per SRC-8's ask, even though the only consumer today
-        // — xkcd_tiles's StaticCanvasTileSource, fully synchronous — never actually exercises this
-        // branch): build the composite ONLY once every one of the n*n sub-tiles has reached a FINAL
-        // answer (an image, a confirmed "no data", or a confirmed load error) — never a partial one.
-        // A sub-tile still in flight (e.g. an XYZTileSource Tile in its 'prepare' state, no image yet)
-        // makes the whole composite "not ready": return `undefined` here, the same convention every
-        // other TileSource in this file uses for "no answer right now" (see TSCache.get()'s comment —
-        // `undefined` is deliberately never cached, so the *next* get() for this key starts over
-        // rather than getting stuck on a stale/partial answer).
-        //
-        // That next call is cheap even mid-load: `source` is expected to do its own caching (every
-        // concrete TileSource in this file does, via TSCache), so re-asking for a sub-tile that's
-        // already in flight is just a cache lookup, not a new network request — repeated polling
-        // (driven by TiledLayer.draw() calling get() once a frame, same as any other pending tile)
-        // cannot spin or deadlock: it does bounded, cheap work each time and converges the moment the
-        // last sub-tile resolves.
-        //
-        // The alternative considered — cache a partial composite immediately and redraw into that same
-        // cached canvas as more sub-tiles complete — would show quadrants progressively instead of
-        // waiting for the whole tile, but needs TSCache to treat a cached entry as mutable-in-place and
-        // re-checked on every hit (it isn't: a cache hit today just returns the stored value, see
-        // TSCache.get()), plus its own "is this composite still incomplete" bookkeeping to know when to
-        // keep touching an already-cached canvas. Not worth that complexity for a wrapper whose one
-        // real consumer never reaches this code path; left as a documented, deliberate limitation
-        // rather than solved speculatively.
+        // SRC-9: build this level from the ADJACENT finer level (z+1), not straight from n*n native
+        // tiles — a real mip chain, not a resample-from-base every time. The original (SRC-8) version
+        // here fetched `this.source.get()` directly n*n times (n = 2^(z0-z): 256 for a single ÷16
+        // composite), each one triggering a full, expensive native decode (xkcd's `load_tree` into a
+        // 2048x2048 canvas) — measured at 90 SECONDS synchronously for just 9 neighboring ÷16 tiles
+        // (see BACKLOG.md SRC-9). Compositing from exactly 4 tiles at z+1 instead, fetched through a
+        // RECURSIVE `this.get()` call (not `this.source.get()`!), fixes this the way a real bitmap
+        // mipmap pyramid is built:
+        //  (1) any single buildTile call now allocates/draws from exactly 4 sub-results, never up to
+        //      n*n — peak work per call is a small constant, not O(n^2), regardless of how far past
+        //      z0 the requested level is;
+        //  (2) `this.get()` routes through TSCache's own `get()` (inherited, unchanged), so every
+        //      intermediate level this recursion touches (z0-1, z0-2, ...) gets cached in `storage`
+        //      right alongside the top-level answer, keyed by its own x:y:z — a later request that
+        //      shares part of this subtree (a shallower zoom over the same area already visited, or a
+        //      composite built afterward whose recursion bottoms out through an already-cached
+        //      intermediate) reuses it via a cheap `ctx.drawImage`, no re-decode;
+        //  (3) the recursion bottoms out exactly at z+1 === z0, where this.get() (inherited TSCache.get,
+        //      via `onGet` = this.buildTile) hits the `z >= this.z0` branch above and becomes the
+        //      ordinary passthrough to `source` — so the expensive native decode of any given native
+        //      tile still happens, just at most ONCE per cache lifetime instead of once per composite
+        //      that happens to include it.
+        const sub = this.tile_size / 2;
+        // Same "wait for a final answer per sub-tile, else return undefined, never cache a partial
+        // composite" convention as before (see the SRC-8 note this used to carry here) — just over
+        // exactly 4 sub-results now instead of up to n*n. A sub-tile still in flight (this.get()
+        // returning `undefined`, e.g. a not-yet-built deeper level or an XYZTileSource tile mid-load)
+        // makes the whole composite "not ready"; the next get() for this key simply retries, cheaply,
+        // since everything sits behind TSCache's own caching.
         let canvas;
         let ctx;
         let anyData = false;
-        for (let j = 0; j < n; j++) {
-            for (let i = 0; i < n; i++) {
-                const subTile = this.source.get(x * n + i, y * n + j, this.z0);
+        for (let dy = 0; dy < 2; dy++) {
+            for (let dx = 0; dx < 2; dx++) {
+                const subTile = this.get(2 * x + dx, 2 * y + dy, z + 1);
                 if (subTile === undefined)
-                    return undefined; // source itself has no answer yet — retry later
+                    return undefined; // not ready yet — retry later, don't cache
                 if (subTile === null)
                     continue; // confirmed "no data" for this quadrant — final, leave blank
                 if (subTile.image === undefined) {
@@ -287,7 +285,7 @@ export class DownsampledTileSource extends TSCache {
                     canvas.height = this.tile_size;
                     ctx = canvas.getContext('2d');
                 }
-                ctx.drawImage(subTile.image, i * sub, j * sub, sub, sub);
+                ctx.drawImage(subTile.image, dx * sub, dy * sub, sub, sub);
                 anyData = true;
             }
         }

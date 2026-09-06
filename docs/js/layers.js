@@ -104,6 +104,25 @@ const XKCD_Z0 = 11; // todo: rename to z_deep, same concept as z_max below (see 
 // per-instance basis LOAD-5 already supports — bounds steady-state memory for either cache
 // regardless of how deep zoom-out goes, at the cost of more eviction/re-fetching if a screen
 // legitimately shows more than XKCD_CACHE_LIMIT distinct tiles at once (uncommon at this tile size).
+//
+// SRC-9 re-examined this value empirically rather than assuming it needed to grow just because
+// intermediate mip levels now share this same cache: measured, it does NOT need to change.
+// A single full ÷16 composite's recursion now touches up to 341 distinct wrapper-cache entries
+// (every native leaf plus every intermediate level — see tile_source.test.ts), so 32 evicts most
+// of that chain long before it could be reused across separate composite builds. But raising the
+// limit doesn't reliably help in practice: tested at 96 against the exact live repro below
+// (realistic-paced wheel zoom-out to ÷16 at the XKCD ship location), frame stalls were
+// indistinguishable from 32 (still up to ~61s) — because the dominant cost at this depth is
+// TiledLayer.draw() synchronously building however many brand-new, never-before-cached composite
+// tiles the current frame's visible grid needs, which no cache size avoids the first time an area
+// is visited. Tested at 2000 (LOAD-5's own default), the tab crashed outright (real OOM, not just
+// slow) partway through the same repro — confirming the *original* concern this constant exists
+// for is still very real under SRC-9's recursive build, which caches strictly more per composite
+// than SRC-8's flat one did (native leaves too, not just the top composite). Left at 32: it's the
+// only tested value that's actually safe, and empirically no worse than the alternatives for the
+// scenario that matters. See BACKLOG.md's SRC-9 entry for the full measurements and the follow-up
+// this points to (spreading/bounding per-frame tile-building work, not attempted here — out of
+// this ticket's scope).
 const XKCD_CACHE_LIMIT = 32;
 const xkcdTiles = new DownsampledTileSource({
     tile_size: 2048,
