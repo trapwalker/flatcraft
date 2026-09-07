@@ -923,6 +923,45 @@ export class MapWidget {
                 layer.visible = true;
         }
     }
+    /**
+     * STATE-1: snapshots the current viewport — position, zoom, rotation — into a plain,
+     * JSON-friendly object. Reads the *target* values (`zoom_target`/`rotation_target`), not the
+     * currently-eased `zoom_factor`/`rotation` — same choice BOOKMARK-1's `goToBookmark` makes in
+     * reverse (assigning into `zoom_target`/`rotation_target`, not the eased fields directly), so a
+     * save-then-restore round trip lands exactly where the user left off rather than wherever the
+     * easing animation happened to be mid-flight at the moment of saving.
+     */
+    serializeState() {
+        return {
+            x: this.c.x,
+            y: this.c.y,
+            zoom: this.zoom_target,
+            rotation: this.rotation_target
+        };
+    }
+    /**
+     * STATE-1: the inverse of serializeState() — applies a (possibly partial) previously-serialized
+     * state to this widget. Every field is optional and applied independently: `x`/`y` only take
+     * effect as a pair (a lone `x` or `y` isn't a valid position, so both are required together),
+     * while `zoom`/`rotation` each apply on their own. Fields left out (or malformed — anything that
+     * fails `Number.isFinite`) are simply skipped, leaving whatever the widget's current value
+     * already is untouched — this is what lets callers (STATE-3/DEMO-11's URL-hash restoration) feed
+     * in a partial or old-format saved state without throwing or needing their own fallback logic.
+     * Instant, un-animated assignment (into `c` directly and into `zoom_target`/`rotation_target`,
+     * same as goToBookmark) — no FLY-4/jumpTo yet to animate this through, and STATE-3 explicitly
+     * doesn't want one for a page-load restore anyway.
+     */
+    deserializeState(state) {
+        if (Number.isFinite(state.x) && Number.isFinite(state.y)) {
+            this.locate(state.x, state.y);
+        }
+        if (Number.isFinite(state.zoom)) {
+            this.zoom_target = state.zoom;
+        }
+        if (Number.isFinite(state.rotation)) {
+            this.rotation_target = state.rotation;
+        }
+    }
     // ROT-6: `dx`/`dy` are a *screen*-oriented vector (already scaled by 1/zoom_factor by the
     // caller — see the mouse-drag `_dx`/`_dy` drain and the WASD speed calc in onRepaint) — e.g.
     // "dx>0" means "the view should move as if the content were pushed rightward on screen", the

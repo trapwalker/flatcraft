@@ -74,15 +74,43 @@ let map: MapWidget;
 
 (function () {
   function init(): void {
-    // try to get start position (and, since ROT-2, rotation) form URL
+    // try to get start position (and, since ROT-2, rotation, and since STATE-3/DEMO-11, zoom and
+    // active base layer) form URL
     const hash = window.location.hash;
-    // `-?` on all three groups (was missing even for x,y before ROT-2 — negative world
-    // coordinates never round-tripped through the URL); the rotation group is optional so old
-    // two-component links still parse, just with rotation defaulting to 0.
-    const match = /#\[(-?\d+),(-?\d+)(?:,(-?\d+))?\]/g.exec(hash);
+    // STATE-3/DEMO-11: URL hash format, informal and versionless for now (STATE-4, not in scope
+    // here, would add real versioning so a future format change doesn't silently mis-parse an old
+    // saved/shared link): `#[x,y,rot,zoom,layer]` —
+    //   x, y    — world position, rounded to whole numbers (as before ROT-2/this ticket).
+    //   rot     — rotation in whole DEGREES, human-readable in the URL bar (as before, ROT-2),
+    //             converted back to radians on parse.
+    //   zoom    — zoom_target, a plain float (fixed to 6 decimal places when written — see
+    //             encodeStateHash below — plenty of precision for this widget's zoom range
+    //             without runaway digits).
+    //   layer   — the active base layer's display name (DEMO-1's `baseLayerControl.active`,
+    //             e.g. "CyclOSM"), `encodeURIComponent`-ed since names contain spaces.
+    // `rot`/`zoom`/`layer` are all optional and independent of each other for *parsing* (old
+    // 2-component `#[x,y]` and 3-component `#[x,y,rot]` links — ROT-2-era — still parse, simply
+    // missing the newer fields); this codebase itself only ever *writes* the full 5-component form
+    // (see the STATE-2 polling block near the end of this function) once this ships.
+    const match = /#\[(-?\d+),(-?\d+)(?:,(-?\d+))?(?:,([^,\]]+),([^\]]*))?\]/.exec(hash);
     const parts = match && match.slice(1);
     const start_position = parts && new Vector(Number(parts[0]), Number(parts[1]));
     const start_rotation = parts && parts[2] !== undefined ? (Number(parts[2]) * Math.PI) / 180 : undefined;
+    // Number(undefined) is NaN, not undefined — guard explicitly so a missing/malformed zoom
+    // component degrades to "no override" (map.deserializeState below already no-ops on NaN too,
+    // this is just belt-and-suspenders/clearer at the call site).
+    const parsedZoom = parts && parts[3] !== undefined ? Number(parts[3]) : NaN;
+    const start_zoom = Number.isFinite(parsedZoom) ? parsedZoom : undefined;
+    // decodeURIComponent throws on malformed percent-encoding — an old/hand-edited/corrupted link
+    // shouldn't crash the page over a cosmetic layer-name mismatch, just fall back to no override.
+    let start_layer: string | undefined;
+    if (parts && parts[4] !== undefined) {
+      try {
+        start_layer = decodeURIComponent(parts[4]);
+      } catch (e) {
+        console.warn('Failed to decode layer name from URL hash, ignoring', e);
+      }
+    }
 
     map = new MapWidget('workfield', {
       scrollType: 'sliding',
@@ -96,6 +124,12 @@ let map: MapWidget;
       layers: ALL_LAYERS,
       zoom_level_min: 5
     });
+
+    // STATE-3: zoom has no constructor option (unlike location/rotation above) — applied here,
+    // instantly (no FLY-4/jumpTo yet), through the shared, core deserializeState() (STATE-1,
+    // src/map.ts) rather than a one-off `map.zoom_target = ...` assignment, so the "ignore
+    // missing/malformed" graceful-degradation logic lives in exactly one place.
+    if (start_zoom !== undefined) map.deserializeState({ zoom: start_zoom });
 
     // BOOKMARK-1/DEMO-7: MapWidget itself only ever constructs an empty BookmarkStore (see its
     // own comment in src/map.ts) — replacing it wholesale here is the demo's chosen way to plug
@@ -145,9 +179,20 @@ let map: MapWidget;
       'ESRI World Imagery': LAYERS.map_tiles_esri
     };
     const baseLayerNames = Object.keys(baseLayers);
-    const initialBaseLayerName = baseLayerNames.find((name) => baseLayers[name].visible) || baseLayerNames[0];
+    // STATE-3/DEMO-11: a `start_layer` from the URL hash wins over whichever layer happened to
+    // default to visible, but ONLY if it actually names one of the layers this demo knows about —
+    // an old/hand-edited/foreign link naming a since-renamed/removed layer falls straight through
+    // to the pre-existing "whichever is already visible, else the first one" default, same
+    // graceful degradation as a missing zoom component above.
+    const startLayerValid = start_layer !== undefined && baseLayerNames.includes(start_layer);
+    const initialBaseLayerName =
+      (startLayerValid ? start_layer : undefined) ||
+      baseLayerNames.find((name) => baseLayers[name].visible) ||
+      baseLayerNames[0];
     // Enforce exclusivity up front too, in case more than one (or none) happened to default to
-    // visible — the dropdown and the layers' actual state must never disagree.
+    // visible — the dropdown and the layers' actual state must never disagree. Same mechanism
+    // restores the URL's saved layer as sets any other initial layer — no second, parallel
+    // exclusivity path just for the URL-restore case.
     for (const name of baseLayerNames) baseLayers[name].visible = name === initialBaseLayerName;
 
     const baseLayerControl = { active: initialBaseLayerName };
@@ -190,6 +235,22 @@ let map: MapWidget;
         // over this specific bookmark's id, not whichever one happens to be last in the loop.
         const goHandle = { go: () => map.goToBookmark(bookmark.id) };
         bookmarkControllers.push(gui_bookmarks.add(goHandle, 'go').name(bookmark.name));
+
+        // DEMO-10: a second button per bookmark for renaming, alongside "go" above — dat.GUI has
+        // no compound "row with two buttons" widget, so this is just a second `.add()` call bound
+        // to a second one-off handle object, same pattern as `goHandle`. Named "✏ <name>" (rather
+        // than reusing the bookmark's own name, which the "go" button above already claims) so
+        // it's unambiguous in the folder which of the two buttons does what.
+        const renameHandle = {
+          rename: () => {
+            const newName = prompt('Rename bookmark:', bookmark.name);
+            if (!newName || newName === bookmark.name) return; // cancelled, blank, or unchanged
+            map.bookmarks.rename(bookmark.id, newName);
+            saveBookmarks();
+            rebuildBookmarksFolder();
+          }
+        };
+        bookmarkControllers.push(gui_bookmarks.add(renameHandle, 'rename').name('✏ ' + bookmark.name));
       }
     }
 
@@ -263,6 +324,60 @@ let map: MapWidget;
     if (attributionEl) {
       attributionEl.textContent = Object.values(ATTRIBUTIONS).join(' | ');
     }
+
+    // STATE-2/STATE-3/DEMO-11 (BACKLOG.md/DEMO_BACKLOG.md): keep the URL hash reflecting the
+    // current position/zoom/rotation/active-base-layer at all times, by direct request ("занеси
+    // настройки локации, зумма и слоя в URL по небольшому таймауту, чтобы в URL всегда было
+    // текущее состояние"). Originally specced as depending on EVT-2 (moveend/zoomend/rotateend
+    // events) — that phase doesn't exist yet, and polling is simpler than subscribing to events
+    // that would have to be built first, so this doesn't wait on it (see STATE-2's own note on
+    // migrating later, if EVT-2 ever lands, without changing this behavior from the outside).
+    //
+    // Builds the same `#[x,y,rot,zoom,layer]` string the top-of-function parser above reads back
+    // (see its own comment for the field-by-field format) from map.serializeState() (STATE-1,
+    // src/map.ts) plus `baseLayerControl.active` (DEMO-1's existing base-layer dropdown value —
+    // the single "active base layer" concept this demo already has, not a second one invented for
+    // this ticket).
+    function encodeStateHash(): string {
+      const state = map.serializeState();
+      const degrees = Math.round((state.rotation * 180) / Math.PI);
+      // Fixed to 6 decimal places — enough precision to round-trip zoom_target meaningfully
+      // without an ever-growing float tail in the URL bar; `Number(...)` afterwards drops any
+      // trailing zeros toFixed would otherwise pad in (e.g. "0.500000" -> 0.5 -> "0.5").
+      const zoom = Number(state.zoom.toFixed(6));
+      return (
+        '#[' +
+        Math.round(state.x) +
+        ',' +
+        Math.round(state.y) +
+        ',' +
+        degrees +
+        ',' +
+        zoom +
+        ',' +
+        encodeURIComponent(baseLayerControl.active) +
+        ']'
+      );
+    }
+
+    // Written once immediately (so the URL reflects reality right away, not only after the first
+    // poll tick) and then re-checked every tick below.
+    let lastWrittenHash = encodeStateHash();
+    history.replaceState('', '', lastWrittenHash);
+
+    // A few hundred ms, per the request's own "по небольшому таймауту" — frequent enough that the
+    // URL never lags noticeably behind what's on screen, infrequent enough not to spam
+    // history.replaceState (browsers rate-limit/otherwise dislike very hot history churn) or waste
+    // CPU on a demo page. `replaceState`, never `pushState` — this must not flood browser history
+    // with an entry per tick, only ever the double-click-to-recenter gesture (ROT-2,
+    // MapWidget.update_url_position) uses pushState, and that's unrelated to this polling loop.
+    const STATE_SYNC_INTERVAL_MS = 400;
+    setInterval(() => {
+      const currentHash = encodeStateHash();
+      if (currentHash === lastWrittenHash) return; // nothing actually changed since last tick
+      lastWrittenHash = currentHash;
+      history.replaceState('', '', currentHash);
+    }, STATE_SYNC_INTERVAL_MS);
   }
   init();
 })();

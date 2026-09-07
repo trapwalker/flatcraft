@@ -50,6 +50,23 @@ export class BookmarkStore {
     get(id) {
         return this._bookmarks.get(id);
     }
+    /**
+     * BOOKMARK-2: renames the bookmark with this id, if any. Updates `name` on the existing
+     * `Bookmark` object IN PLACE (same object, same `id`) rather than remove()+add() — that would
+     * be observable as a different object identity for no reason, and would churn the id: `add()`
+     * only reuses a caller-supplied id, so a remove+add round trip would either mint a fresh
+     * (different) id or require the caller to thread the old one through by hand. Keeping the id
+     * stable matters because outside code may reference a bookmark by id (e.g. a future STATE-*
+     * URL format that names a bookmark, rather than embedding a full position/zoom/rotation).
+     * Returns whether a bookmark with this id was found (and thus actually renamed).
+     */
+    rename(id, name) {
+        const bookmark = this._bookmarks.get(id);
+        if (!bookmark)
+            return false;
+        bookmark.name = name;
+        return true;
+    }
     /** Every bookmark currently in the store, in insertion order. A fresh array each call — safe
      *  for a caller to hold onto without it silently changing under them, but not "live". */
     list() {

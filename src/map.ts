@@ -209,6 +209,22 @@ const ZOOM_ROTATE_ACTIVATION_PX = 10;
 // rates instead of one axis visibly outrunning the other.
 const ZOOM_DRAG_PX_PER_DOUBLING = 300;
 
+// STATE-1 (BACKLOG.md, "Фаза 11. Сериализация состояния"): the plain, JSON-friendly shape of a
+// MapWidget's viewport state — position/zoom/rotation, nothing else. Deliberately does NOT
+// include which layer is active: MapWidget has no built-in notion of "the" active base layer
+// (that's a demo-UI convention — DEMO-1's `baseLayerControl` in src/index.ts, built on top of a
+// set of otherwise-ordinary `Layer.visible` flags) — layering that concern in here would break
+// the same separation-of-concerns BookmarkStore.serialize()/deserialize() already established
+// (this module doesn't know or care *where*/*how* its state is persisted, or what else a caller
+// chooses to persist alongside it). See src/index.ts's STATE-2/STATE-3/DEMO-11 for how the demo
+// bolts a `layer` field onto its own URL-hash encoding, next to this.
+export interface SerializedMapState {
+  x: number;
+  y: number;
+  zoom: number;
+  rotation: number;
+}
+
 export interface MapWidgetOptions {
   scrollType?: string;
   location?: Vector;
@@ -1189,6 +1205,47 @@ export class MapWidget { // todo: setup layers
     if (bookmark.layerId !== undefined) {
       const layer = this.layers.find((l) => l.name === bookmark.layerId);
       if (layer) layer.visible = true;
+    }
+  }
+
+  /**
+   * STATE-1: snapshots the current viewport — position, zoom, rotation — into a plain,
+   * JSON-friendly object. Reads the *target* values (`zoom_target`/`rotation_target`), not the
+   * currently-eased `zoom_factor`/`rotation` — same choice BOOKMARK-1's `goToBookmark` makes in
+   * reverse (assigning into `zoom_target`/`rotation_target`, not the eased fields directly), so a
+   * save-then-restore round trip lands exactly where the user left off rather than wherever the
+   * easing animation happened to be mid-flight at the moment of saving.
+   */
+  serializeState(): SerializedMapState {
+    return {
+      x: this.c.x,
+      y: this.c.y,
+      zoom: this.zoom_target,
+      rotation: this.rotation_target
+    };
+  }
+
+  /**
+   * STATE-1: the inverse of serializeState() — applies a (possibly partial) previously-serialized
+   * state to this widget. Every field is optional and applied independently: `x`/`y` only take
+   * effect as a pair (a lone `x` or `y` isn't a valid position, so both are required together),
+   * while `zoom`/`rotation` each apply on their own. Fields left out (or malformed — anything that
+   * fails `Number.isFinite`) are simply skipped, leaving whatever the widget's current value
+   * already is untouched — this is what lets callers (STATE-3/DEMO-11's URL-hash restoration) feed
+   * in a partial or old-format saved state without throwing or needing their own fallback logic.
+   * Instant, un-animated assignment (into `c` directly and into `zoom_target`/`rotation_target`,
+   * same as goToBookmark) — no FLY-4/jumpTo yet to animate this through, and STATE-3 explicitly
+   * doesn't want one for a page-load restore anyway.
+   */
+  deserializeState(state: Partial<SerializedMapState>): void {
+    if (Number.isFinite(state.x) && Number.isFinite(state.y)) {
+      this.locate(state.x as number, state.y as number);
+    }
+    if (Number.isFinite(state.zoom)) {
+      this.zoom_target = state.zoom as number;
+    }
+    if (Number.isFinite(state.rotation)) {
+      this.rotation_target = state.rotation as number;
     }
   }
 

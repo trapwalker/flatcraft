@@ -63,6 +63,63 @@ describe('BookmarkStore', () => {
     expect(store.list().length).toBe(2);
   });
 
+  // BOOKMARK-2: rename(id, name) updates an existing Bookmark's `name` in place (same object,
+  // same id) and reports whether a bookmark with that id was found.
+  describe('rename()', () => {
+    it('renames an existing bookmark and returns true', () => {
+      const store = new BookmarkStore();
+      const bookmark = store.add({
+        name: 'Old name',
+        position: new Vector(1, 2),
+        zoom: 0.5,
+        rotation: 1.2,
+        layerId: 'some-layer'
+      });
+
+      const result = store.rename(bookmark.id, 'New name');
+
+      expect(result).toBe(true);
+      expect(store.get(bookmark.id)?.name).toBe('New name');
+    });
+
+    it('renaming a nonexistent id returns false and changes nothing', () => {
+      const store = new BookmarkStore();
+      const bookmark = store.add({ name: 'Untouched', position: new Vector(0, 0) });
+
+      const result = store.rename('does-not-exist', 'New name');
+
+      expect(result).toBe(false);
+      // The store's actual (existing) bookmark is untouched.
+      expect(store.get(bookmark.id)?.name).toBe('Untouched');
+      // No new entry was created for the nonexistent id either.
+      expect(store.list().length).toBe(1);
+    });
+
+    it('keeps id/position/zoom/rotation/layerId unchanged, and mutates the same object in place', () => {
+      const store = new BookmarkStore();
+      const bookmark = store.add({
+        name: 'Before',
+        position: new Vector(10, 20),
+        zoom: 0.25,
+        rotation: 3.14,
+        layerId: 'layer-x'
+      });
+      const idBefore = bookmark.id;
+
+      store.rename(bookmark.id, 'After');
+
+      const renamed = store.get(idBefore);
+      expect(renamed).toBe(bookmark); // same object identity, not remove()+add()
+      expect(renamed?.id).toBe(idBefore);
+      expect(renamed?.name).toBe('After');
+      expect(renamed?.position.x).toBe(10);
+      expect(renamed?.position.y).toBe(20);
+      expect(renamed?.zoom).toBe(0.25);
+      expect(renamed?.rotation).toBe(3.14);
+      expect(renamed?.layerId).toBe('layer-x');
+    });
+  });
+
   describe('serialize()/deserialize()', () => {
     it('round-trips a bookmark with no layerId/zoom/rotation set', () => {
       const store = new BookmarkStore();
