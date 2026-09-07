@@ -162,6 +162,26 @@ export class TSCache extends TileSource {
     return count;
   }
 
+  // LOAD-9 (debug-overlay memory estimate): a rough, honest RGBA byte count for every cached tile
+  // that actually has a ready image — `width * height * 4`, the same convention browser devtools
+  // use for canvas/image memory. Not exact (the browser's real internal storage format for a
+  // decoded <img>/<canvas> isn't exposed to script, and could in principle differ — compressed
+  // texture upload, sub-byte formats, etc.) but a consistent, conservative upper-ish bound for an
+  // uncompressed raster, cheap enough to compute on demand every frame (same on-demand-getter
+  // pattern as loaded_count/error_count/loading_count above, for the same "can't drift from
+  // eviction" reason). Entries with no image yet (mid-flight) or `null` (confirmed no-data) are
+  // skipped — they occupy no meaningful raster memory of their own.
+  get estimated_bytes(): number {
+    let total = 0;
+    for (const tile of this.storage.values()) {
+      if (tile && tile.image !== undefined) {
+        const image = tile.image as { width: number; height: number };
+        total += image.width * image.height * 4;
+      }
+    }
+    return total;
+  }
+
   get(x: number, y: number, z: number): Tile | null | undefined {
     const key = x + ':' + y + ':' + z;
 

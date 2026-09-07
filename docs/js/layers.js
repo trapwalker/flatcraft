@@ -18,7 +18,7 @@ const tsBack = new XYZTileSource({
     urlTemplate: (x, y, z) => `http://roaddogs.ru/map/back/${z}/${x}/${y}${TILE_EXT}`
 });
 // DEMO-1: `tsFront` and the old `tsOSM` were the exact same OSM URL declared twice — consolidated
-// to this one source, used by the "Map tiles front" layer.
+// to this one source, used by the `map_tiles_front` layer (DEMO-9: displayed as "OpenStreetMap").
 const tsFront = new XYZTileSource({
     tile_size: 256,
     urlTemplate: (x, y, z) => `https://a.tile.openstreetmap.org/${z}/${x}/${y}${TILE_EXT}`
@@ -76,7 +76,7 @@ const tsEsriWorldImagery = new EsriWorldImagerySource({
 // ToU. Rendered as a plain, unstyled block near the layer panel — see index.ts — not meant to be
 // pretty, just present before this demo page is ever linked to anyone outside the project.
 export const ATTRIBUTIONS = {
-    'Map tiles front': '© OpenStreetMap contributors',
+    OpenStreetMap: '© OpenStreetMap contributors',
     CyclOSM: 'Map style: © CyclOSM (CC-BY-SA) | Map data: © OpenStreetMap contributors',
     OpenTopoMap: 'Map style: © OpenTopoMap (CC-BY-SA) | Map data: © OpenStreetMap contributors',
     'ESRI World Imagery': 'Imagery: © Esri, Maxar, Earthstar Geographics, and the GIS User Community'
@@ -189,15 +189,29 @@ function drawTileDebug(map, ix, iy, iz, x, y, tsize, _tile, gridMatrix) {
     ctx.rect(x, y, tsize, tsize);
     ctx.stroke();
 }
+// LOAD-9: formats a raw byte count (see TSCache.estimated_bytes, tile_source.ts) as KB or MB —
+// the debug overlay is for a human to glance at, and nobody reads "13631488" as "13 MB" at a
+// glance the way a bare byte count reads on a devtools memory tab. MB only kicks in once the KB
+// figure would otherwise run to 4+ digits (>= 1024 KB) — below that, whole KB is already a small,
+// readable number and switching units early would just mean more decimals for less precision
+// (e.g. "0.5 MB" tells you less than "512 KB" does).
+function formatMemoryEstimate(bytes) {
+    const kb = bytes / 1024;
+    if (kb >= 1024)
+        return (kb / 1024).toFixed(1) + ' MB';
+    return Math.round(kb) + ' KB';
+}
 function drawDebugInfo(map) {
     const ctx = map.ctx;
     const w = map.canvas.width;
     const h = map.canvas.height;
-    // The tile-stats lines (LOAD-8 — see below) are the widest in this block, ~490px at this font
-    // size with the counts this session happened to have — cumulative counters only grow, and
-    // `hits` in particular can reach into the millions over a long session, so this leaves more
-    // headroom than a snapshot measurement would justify literally.
-    const x = w - 560;
+    // The "cached=.../hits=..." line (DEMO-8's inline hits= clarification made it the widest in
+    // this block) measures ~890px at this font size with the counts a real, tile-loaded session had
+    // (verified via canvas.measureText, not eyeballed) — cumulative counters only grow, and `hits`
+    // in particular can reach into the millions over a long session, so this leaves more headroom
+    // than that one measurement would justify literally, to keep the line from running off the
+    // right edge of the canvas as it grows.
+    const x = w - 1000;
     const pos = new Vector(Math.round(map.c.x), Math.round(map.c.y));
     ctx.font = '20px Arial';
     ctx.fillStyle = this.options.color;
@@ -234,8 +248,31 @@ function drawDebugInfo(map) {
     //     queued for it (cumulative) vs. how many are still waiting in `load_queue` right now
     //     (live).
     //
-    // Three lines, topmost (h-120) first, reading top-to-bottom the same order as this comment.
+    // Five lines, topmost (h-160) first, reading top-to-bottom the same order as this comment (the
+    // two DEMO-8/LOAD-9 memory lines above the three LOAD-8 ones, since "how much memory" is the
+    // more actionable at-a-glance number).
     const frontLayer = LAYERS.map_tiles_front;
+    // DEMO-8/LOAD-9: total cache memory (every tile the LRU cache currently holds, regardless of
+    // whether it's on screen right now) vs. just the tiles in the CURRENT visible range — the same
+    // distinction "cached" vs. "screen" already draws for tile *counts* below, extended to bytes.
+    // The visible-range figure reuses the exact tx/ty/dx/dy/z range TiledLayer.draw() just computed
+    // for this same frame (frontLayer.getLevelParams — see map.ts) rather than recomputing it some
+    // other way, so it can never disagree with what `screen=` below is counting. Reads `tsFront.
+    // storage` directly (not `.get()`) specifically so glancing at the debug overlay never itself
+    // triggers a network request for a not-yet-cached tile.
+    const level_params = frontLayer.getLevelParams(map, w, h);
+    let visibleBytes = 0;
+    for (let y = level_params.ty - level_params.dy; y <= level_params.ty + level_params.dy; y++) {
+        for (let x2 = level_params.tx - level_params.dx; x2 <= level_params.tx + level_params.dx; x2++) {
+            const tile = tsFront.storage.get(x2 + ':' + y + ':' + level_params.z);
+            if (tile && tile.image !== undefined) {
+                const image = tile.image;
+                visibleBytes += image.width * image.height * 4;
+            }
+        }
+    }
+    ctx.fillText('mem(cache)=' + formatMemoryEstimate(tsFront.estimated_bytes) + ' (every tile the LRU cache currently holds)', x, h - 160);
+    ctx.fillText('mem(screen)=' + formatMemoryEstimate(visibleBytes) + ' (only tiles in the current visible range)', x, h - 140);
     ctx.fillText('tiles(front): screen=' + frontLayer.visible_tile_count
         + ' inflight=' + tsFront.loading_count
         + ' loaded=' + tsFront.loaded_count
@@ -243,9 +280,9 @@ function drawDebugInfo(map) {
     ctx.fillText('cached=' + tsFront.cache_size
         + ' requested=' + tsFront.requested_count
         + ' received=' + tsFront.received_count
-        + ' hits=' + tsFront.cache_hit_count, x, h - 100);
+        + ' hits=' + tsFront.cache_hit_count + ' (served from cache, no request to the source)', x, h - 100);
     ctx.fillText('prefetch=' + tsFront.prefetch_queued_count
-        + ' pending=' + tsFront.load_queue.length, x, h - 80);
+        + ' pending=' + tsFront.load_queue.length + ' (queued for background preload, not loaded yet)', x, h - 80);
 }
 /// Mandelbrot (DEMO-4) ///////////////////////////////////////////////////////////////////////////
 // A `StaticCanvasTileSource` layer, same base class/pattern as `xkcd_tiles` above, but one that
@@ -384,20 +421,30 @@ export const LAYERS = {
         visible: false,
         z_max: XKCD_Z0 // todo: rename to z_deep
     }),
+    // DEMO-9: `tsBack`/`tsMerged` both point at `roaddogs.ru`, an old personal/test host from this
+    // project's early history — confirmed (not assumed) dead: the domain doesn't resolve at all
+    // (DNS failure), so these two layers can never work under any circumstances right now. Kept
+    // rather than removed (the domain could come back, or the data may still have historical
+    // interest), but renamed so the layer list itself makes clear these aren't a working
+    // alternative to the real map, without anyone having to try them first to find out.
     map_tiles_back: new TiledLayer({
-        name: 'Map tiles back',
+        name: 'RoadDogs back (не работает)',
         tile_source: tsBack,
         visible: false,
         z_max: 18 // todo: rename to z_deep
     }),
+    // DEMO-9: was "Map tiles front" — the odd "front"/"back"/"mixed" naming only made sense next to
+    // the (also renamed) RoadDogs layers above; this is plain, real OpenStreetMap, so it gets OSM's
+    // own name, matching CyclOSM/OpenTopoMap/ESRI World Imagery below (also named after their actual
+    // source, not an internal role). ATTRIBUTIONS' key is renamed to match.
     map_tiles_front: new TiledLayer({
-        name: 'Map tiles front',
+        name: 'OpenStreetMap',
         tile_source: tsFront,
         visible: true,
         z_max: 18 // todo: rename to z_deep
     }),
     map_tiles: new TiledLayer({
-        name: 'Map tiles (mixed)',
+        name: 'RoadDogs mixed (не работает)',
         tile_source: tsMerged,
         visible: false,
         z_max: 18 // todo: rename to z_deep

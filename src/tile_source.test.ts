@@ -90,6 +90,59 @@ describe('TSCache caching (LOAD-5)', () => {
   });
 });
 
+// A plain `{width, height}` stand-in for a real image/canvas — estimated_bytes only ever reads
+// those two fields (see its own doc comment in tile_source.ts), so nothing DOM-specific is needed
+// here (same reasoning as this file's other Tile fixtures that don't involve a real <img>).
+function tileWithImage(x: number, y: number, z: number, width: number, height: number): Tile {
+  return new Tile(x, y, z, { image: { width, height } as unknown as CanvasImageSource });
+}
+
+describe('TSCache.estimated_bytes (LOAD-9)', () => {
+  it('is 0 for an empty cache', () => {
+    const { cache } = countingSource(() => null);
+    expect(cache.estimated_bytes).toBe(0);
+  });
+
+  it('sums width * height * 4 (RGBA) over every entry with a ready image', () => {
+    const cache = new TSCache({
+      tile_size: 256,
+      onGet: (x, y, z) => (x === 0 ? tileWithImage(x, y, z, 256, 256) : tileWithImage(x, y, z, 512, 512))
+    });
+
+    cache.get(0, 0, 0); // 256*256*4 = 262144
+    cache.get(1, 0, 0); // 512*512*4 = 1048576
+
+    expect(cache.estimated_bytes).toBe(256 * 256 * 4 + 512 * 512 * 4);
+  });
+
+  it('skips entries with no image yet (mid-flight)', () => {
+    const { cache } = countingSource((x, y, z) => new Tile(x, y, z, { state: 'prepare' })); // no `image` set
+
+    cache.get(0, 0, 0);
+
+    expect(cache.estimated_bytes).toBe(0);
+  });
+
+  it('skips null entries (confirmed no-data)', () => {
+    const { cache } = countingSource(() => null);
+
+    cache.get(0, 0, 0);
+
+    expect(cache.estimated_bytes).toBe(0);
+  });
+
+  it('drops an evicted entry\'s bytes out of the total', () => {
+    const { cache } = countingSource((x, y, z) => tileWithImage(x, y, z, 256, 256));
+    cache.cache_limit = 1;
+
+    cache.get(0, 0, 0);
+    expect(cache.estimated_bytes).toBe(256 * 256 * 4);
+
+    cache.get(1, 0, 0); // evicts (0,0,0) — cache_limit is 1
+    expect(cache.estimated_bytes).toBe(256 * 256 * 4); // one entry's worth, not two
+  });
+});
+
 describe('TSCache.heat() (LOAD-1 preload queue)', () => {
   it('queues tiles at absolute coordinates near (x,y,z) — not doubled', () => {
     // Real-world symptom this catches: heat(100, 200, 18, ...) used to queue x~300/y~600/z~36

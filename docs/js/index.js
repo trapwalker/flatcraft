@@ -152,9 +152,13 @@ let map;
         const gui_layers = gui.addFolder('Layers');
         gui_layers.closed = false;
         const baseLayers = {
-            'Map tiles back': LAYERS.map_tiles_back,
-            'Map tiles front': LAYERS.map_tiles_front,
-            'Map tiles (mixed)': LAYERS.map_tiles,
+            // DEMO-9: keys renamed to match LAYERS.map_tiles_back/front/map_tiles's own (also renamed)
+            // `.name` — this dict's keys are a separate, independent set of display strings from
+            // `Layer.name` (dat.GUI's dropdown shows THESE keys, not `.name`), so DEMO-9's rename had to
+            // be mirrored here too or the dropdown would still show the old, confusing labels.
+            'RoadDogs back (не работает)': LAYERS.map_tiles_back,
+            OpenStreetMap: LAYERS.map_tiles_front,
+            'RoadDogs mixed (не работает)': LAYERS.map_tiles,
             'XKCD tiles': LAYERS.xkcd_tiles,
             // DEMO-2's three new no-key sources, folded in here per DEMO_BACKLOG.md.
             CyclOSM: LAYERS.map_tiles_cyclosm,
