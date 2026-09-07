@@ -1,3 +1,14 @@
+/* #workfield below is position:absolute + height:100%, which needs an explicit height
+   somewhere up the html/body chain to resolve against — without it, mobile WebKit in
+   particular can collapse it to zero height (blank page) even though desktop browsers
+   fall back to the viewport correctly. 100dvh (dynamic viewport height) rather than
+   100vh so it doesn't get stuck under/behind the mobile browser's address bar. */
+html, body {
+  margin : 0;
+  height : 100%;
+  height : 100dvh;
+}
+
 #workfield {
   display : block;
   position : absolute;

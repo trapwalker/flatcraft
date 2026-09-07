@@ -2,6 +2,12 @@
 <html >
   <head>
     <meta charset="UTF-8">
+    <!-- Without this, mobile browsers lay the page out against a fake desktop-width
+         viewport (~980px) and zoom-to-fit, instead of the real screen size. Combined
+         with #workfield's height:100%, that's enough to make the map render blank or
+         collapse to zero height on mobile Safari/Chrome — see css/style.css's html/body
+         rule for the other half of the fix. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Smooth map</title>
         <link rel="stylesheet" href="css/style.css">
   </head>
