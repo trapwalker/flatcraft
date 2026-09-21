@@ -15,6 +15,13 @@ export const COLOR_MAP = {
     '1': null,
     '+': 'green'
 };
+// VEC-1: fixed MVP style for VectorLayer — VEC-2 is where per-feature/data-driven style() lands;
+// until then this is the one hardcoded look for every feature, kept here (not inline in
+// vector_layer.ts) for the same reason BASE_COLOR/COLOR_MAP live here rather than in layers.ts —
+// a single place for the project's color constants.
+export const VECTOR_LAYER_POINT_COLOR = 'rgb(220, 50, 50)';
+export const VECTOR_LAYER_LINE_COLOR = 'rgb(50, 90, 220)';
+export const VECTOR_LAYER_FILL_COLOR = 'rgba(50, 90, 220, 0.35)';
 // `LocationDef`/`locations` used to live here, but they reference the live `map` instance and
 // `LAYERS` from index.ts/layers.ts — moved to index.ts (where both already exist locally) when
 // this file became a real ES module, to avoid a defines.ts <-> index.ts <-> layers.ts import
