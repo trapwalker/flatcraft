@@ -307,5 +307,15 @@ export class VectorLayer extends Layer {
         }
       }
     }
+
+    // ctx.lineWidth/ctx.setLineDash are shared canvas *state*, not scoped to this draw() call —
+    // the per-feature reset above (unconditional before every stroke()) only keeps features within
+    // THIS layer from bleeding onto each other. Without this, the last feature drawn above (if it
+    // set a custom lineWidth/dash) would leave that state on map.ctx for whatever layer draws next
+    // this frame (e.g. map_grid/drawTileDebug in src/layers.ts, neither of which sets its own
+    // lineWidth/dash — they rely on the canvas's ambient default, exactly what this restores) —
+    // the same class of leak as the per-feature case, just at this layer's own outer boundary.
+    ctx.lineWidth = DEFAULT_LINE_WIDTH;
+    ctx.setLineDash(DEFAULT_DASH);
   }
 }

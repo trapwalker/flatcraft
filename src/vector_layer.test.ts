@@ -47,7 +47,7 @@ interface RecordedCall {
   dash?: number[];
 }
 
-function createMockCtx(): { ctx: CanvasRenderingContext2D; calls: RecordedCall[] } {
+function createMockCtx(): { ctx: CanvasRenderingContext2D; calls: RecordedCall[]; getDash: () => number[] } {
   const calls: RecordedCall[] = [];
   let currentDash: number[] = [];
   const ctx = {
@@ -77,7 +77,10 @@ function createMockCtx(): { ctx: CanvasRenderingContext2D; calls: RecordedCall[]
       calls.push({ method: 'stroke', args: [], strokeStyle: ctx.strokeStyle, lineWidth: ctx.lineWidth, dash: currentDash.slice() });
     }
   };
-  return { ctx: ctx as unknown as CanvasRenderingContext2D, calls };
+  // Reads the mock's live internal dash state directly (not off a recorded call) — used by the
+  // cross-layer-leak test below, which checks ctx state *after* draw() returns, when there is no
+  // further fill()/stroke() call to snapshot it onto.
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, calls, getDash: () => currentDash.slice() };
 }
 
 /** A DOM-free CanvasImageSource stand-in for icon tests: in vitest's default (node) environment,
@@ -457,6 +460,26 @@ describe('VectorLayer.draw with a style callback', () => {
     // the default width, not inherit the first feature's canvas state.
     expect(strokeCalls[1].lineWidth).toBe(1);
     expect(strokeCalls[1].dash).toEqual([]);
+  });
+
+  // Same bug class as the test above, but at draw()'s own outer boundary rather than between two
+  // features of one layer: map.ctx is ONE CanvasRenderingContext2D shared across every layer for
+  // the whole frame (see MapWidget.onRepaint's `for (...) layer.draw(this)` loop) — if the LAST
+  // feature this layer draws leaves a custom lineWidth/dash on ctx, whatever layer draws next this
+  // frame (e.g. map_grid/drawTileDebug, neither of which sets its own lineWidth/dash — see
+  // src/layers.ts) would silently inherit it. draw() must leave ctx back at the neutral defaults
+  // every other layer already assumes, not just avoid leaking between its own features.
+  it('resets ctx.lineWidth/dash to defaults after draw() returns, so a layer drawn afterwards does not inherit them', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const layer = new VectorLayer({
+      features: [{ geometry: { type: 'LineString', coordinates: [[0, 0], [1, 0]] } }],
+      style: (): FeatureStyle => ({ lineWidth: 12, dash: [7, 3] }) // the last (only) feature drawn
+    });
+    const { ctx, getDash } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    expect((ctx as unknown as { lineWidth: number }).lineWidth).toBe(1);
+    expect(getDash()).toEqual([]);
   });
 
   it('a Point with an icon draws via drawImage (centered, using the explicit iconSize) instead of a filled circle', () => {
