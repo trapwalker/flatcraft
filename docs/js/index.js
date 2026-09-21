@@ -125,6 +125,20 @@ let map;
         // own comment in src/map.ts) — replacing it wholesale here is the demo's chosen way to plug
         // in localStorage-backed persistence without adding any storage concept to the core widget.
         map.bookmarks = loadOrSeedBookmarks();
+        // VEC-7: wires the demo vector layer's click/hover into this real map instance — enableFeatureEvents
+        // (src/vector_layer.ts) is a plain method with no "added to a map" lifecycle hook to call it from
+        // automatically (see that method's own doc comment), so a host that wants the behavior calls it
+        // itself once, here, same spot other one-time map-instance wiring (map.bookmarks above) happens.
+        // Hover: `map.canvas.style.cursor` is not touched anywhere else in this codebase (checked via
+        // grep before relying on this) — nothing here can conflict with pan/zoom/rotate's own handling.
+        const demoVectorLayer = LAYERS.demo_vector;
+        demoVectorLayer.onFeatureHover = (feature) => {
+            map.canvas.style.cursor = feature ? 'pointer' : 'default';
+        };
+        demoVectorLayer.onFeatureClick = (feature) => {
+            console.log('[VEC-7 demo] feature click:', feature.id, feature.properties);
+        };
+        demoVectorLayer.enableFeatureEvents(map);
         // GUI
         const gui = new dat.GUI();
         gui.add(map, 'zoom_target', map.zoom_min, map.zoom_max).step((map.zoom_max - map.zoom_min) / 64).name('Zoom').listen();
@@ -194,7 +208,8 @@ let map;
             'Map tiles debug': LAYERS.map_debug,
             'XKCD tiles debug': LAYERS.xkcd_debug,
             'Mandelbrot set': LAYERS.mandelbrot_tiles, // DEMO-4 — standalone, not a base layer
-            'Debug data': LAYERS.debug
+            'Debug data': LAYERS.debug,
+            'Демо: векторный слой': LAYERS.demo_vector // VEC-7
         };
         for (const name in overlayLayers) {
             gui_layers.add(overlayLayers[name], 'visible').name(name).listen();

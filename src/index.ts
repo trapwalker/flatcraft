@@ -4,6 +4,7 @@ import type { Layer } from './map.js';
 import { LAYERS, ALL_LAYERS, ATTRIBUTIONS, MANDELBROT_TILE_SIZE, MANDELBROT_Z_MAX, MANDELBROT_BASE_Z } from './layers.js';
 import { BookmarkStore } from './bookmarks.js';
 import type { Bookmark } from './bookmarks.js';
+import type { VectorLayer } from './vector_layer.js';
 
 // Bookmarks (DEMO-7, DEMO_BACKLOG.md) ============================================
 // Replaces the old hand-rolled `locations` object (a hardcoded `{pos, caption, go()}` record,
@@ -136,6 +137,21 @@ let map: MapWidget;
     // in localStorage-backed persistence without adding any storage concept to the core widget.
     map.bookmarks = loadOrSeedBookmarks();
 
+    // VEC-7: wires the demo vector layer's click/hover into this real map instance — enableFeatureEvents
+    // (src/vector_layer.ts) is a plain method with no "added to a map" lifecycle hook to call it from
+    // automatically (see that method's own doc comment), so a host that wants the behavior calls it
+    // itself once, here, same spot other one-time map-instance wiring (map.bookmarks above) happens.
+    // Hover: `map.canvas.style.cursor` is not touched anywhere else in this codebase (checked via
+    // grep before relying on this) — nothing here can conflict with pan/zoom/rotate's own handling.
+    const demoVectorLayer = LAYERS.demo_vector as VectorLayer;
+    demoVectorLayer.onFeatureHover = (feature) => {
+      map.canvas.style.cursor = feature ? 'pointer' : 'default';
+    };
+    demoVectorLayer.onFeatureClick = (feature) => {
+      console.log('[VEC-7 demo] feature click:', feature.id, feature.properties);
+    };
+    demoVectorLayer.enableFeatureEvents(map);
+
     // GUI
 
     const gui = new dat.GUI();
@@ -212,7 +228,8 @@ let map: MapWidget;
       'Map tiles debug': LAYERS.map_debug,
       'XKCD tiles debug': LAYERS.xkcd_debug,
       'Mandelbrot set': LAYERS.mandelbrot_tiles, // DEMO-4 — standalone, not a base layer
-      'Debug data': LAYERS.debug
+      'Debug data': LAYERS.debug,
+      'Демо: векторный слой': LAYERS.demo_vector // VEC-7
     };
     for (const name in overlayLayers) {
       gui_layers.add(overlayLayers[name], 'visible').name(name).listen();

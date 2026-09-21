@@ -8,6 +8,8 @@ import { XYZTileSource, StaticCanvasTileSource, DownsampledTileSource } from './
 import { Layer, TiledLayer } from './map.js';
 import type { MapWidget } from './map.js';
 import type { Mat2D } from './mat2d.js';
+import { VectorLayer } from './vector_layer.js';
+import type { Feature, FeatureStyle } from './vector_layer.js';
 
 // SRC-2: retry-with-backoff (SRC-4) and the URL-template pattern now live in XYZTileSource
 // (src/tile_source.ts) — generalized out of what used to be a layers.ts-local `makeTileGetter`,
@@ -447,6 +449,106 @@ function drawMandelbrotTile(getCtx: () => CanvasRenderingContext2D, x: number, y
   return true; // the set is defined everywhere — unlike xkcd, there's no sparse "no data" case
 }
 
+/// Demo vector layer (VEC-7) ////////////////////////////////////////////////////////////////////
+// Deliberate, conscious narrowing vs. BACKLOG.md's original VEC-7 wording ("demo layer with TILED
+// vector data, e.g. MVT boundaries/roads over the existing raster tile layers"): VEC-3b (a tiled
+// vector *source*, needing protobuf/MVT decoding) doesn't exist yet — that's a separate, large
+// ticket. What's built here instead is a demo on top of the VectorLayer model VEC-1/VEC-2/VEC-4
+// already shipped: a small, static, in-memory Feature array (no VectorSource abstraction, no
+// tiled/MVT data), just enough to exercise that whole stack (all 4 geometry types, per-feature
+// styling, hit-testing/click/hover) live on the real demo page. See BOOKMARK-2's own SEED_BOOKMARKS
+// precedent for "a fixed constant near the top of this file" as the established pattern for demo
+// seed data in this project.
+//
+// DEMO_VECTOR_ORIGIN deliberately duplicates src/index.ts's DEFAULT_START_POSITION (40373076,
+// 22579095) as a plain local constant, rather than importing it — src/index.ts already imports
+// LAYERS from this file, so importing back would be a cycle. Every feature below is placed within
+// a few hundred world units of this point specifically so it's on screen at the widget's default
+// view (start position + start zoom) without the person enabling this layer having to navigate
+// anywhere first: at the default zoom_factor (1, i.e. zoom_max — MapWidget.constructor,
+// src/map.ts), one world unit is one screen pixel, so "a few hundred world units" is directly "a
+// few hundred screen pixels" — confirmed empirically via a live Playwright screenshot while
+// building this demo (see BACKLOG.md's VEC-7 retrospective for the exact numbers), not just
+// computed from the zoom math above.
+const DEMO_VECTOR_ORIGIN_X = 40373076;
+const DEMO_VECTOR_ORIGIN_Y = 22579095;
+
+const demoVectorFeatures: Feature[] = [
+  {
+    id: 'demo-point-default',
+    geometry: { type: 'Point', coordinates: [DEMO_VECTOR_ORIGIN_X - 180, DEMO_VECTOR_ORIGIN_Y - 160] },
+    properties: { label: 'Point A (default style)' }
+  },
+  {
+    id: 'demo-point-styled',
+    geometry: { type: 'Point', coordinates: [DEMO_VECTOR_ORIGIN_X + 180, DEMO_VECTOR_ORIGIN_Y - 160] },
+    properties: { label: 'Point B (styled: bigger, teal)' }
+  },
+  {
+    id: 'demo-line',
+    geometry: {
+      type: 'LineString',
+      coordinates: [
+        [DEMO_VECTOR_ORIGIN_X - 220, DEMO_VECTOR_ORIGIN_Y],
+        [DEMO_VECTOR_ORIGIN_X - 70, DEMO_VECTOR_ORIGIN_Y - 60],
+        [DEMO_VECTOR_ORIGIN_X + 70, DEMO_VECTOR_ORIGIN_Y + 60],
+        [DEMO_VECTOR_ORIGIN_X + 220, DEMO_VECTOR_ORIGIN_Y]
+      ]
+    },
+    properties: { label: 'Dashed orange line' }
+  },
+  {
+    id: 'demo-polygon-with-hole',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [
+        // Outer ring: a square below the line/points above.
+        [
+          [DEMO_VECTOR_ORIGIN_X - 150, DEMO_VECTOR_ORIGIN_Y + 100],
+          [DEMO_VECTOR_ORIGIN_X + 150, DEMO_VECTOR_ORIGIN_Y + 100],
+          [DEMO_VECTOR_ORIGIN_X + 150, DEMO_VECTOR_ORIGIN_Y + 300],
+          [DEMO_VECTOR_ORIGIN_X - 150, DEMO_VECTOR_ORIGIN_Y + 300],
+          [DEMO_VECTOR_ORIGIN_X - 150, DEMO_VECTOR_ORIGIN_Y + 100]
+        ],
+        // Hole: a smaller square cut out of the outer ring's middle (evenodd fill rule, see
+        // VectorLayer.draw's own comment on why winding order doesn't matter here).
+        [
+          [DEMO_VECTOR_ORIGIN_X - 60, DEMO_VECTOR_ORIGIN_Y + 160],
+          [DEMO_VECTOR_ORIGIN_X + 60, DEMO_VECTOR_ORIGIN_Y + 160],
+          [DEMO_VECTOR_ORIGIN_X + 60, DEMO_VECTOR_ORIGIN_Y + 240],
+          [DEMO_VECTOR_ORIGIN_X - 60, DEMO_VECTOR_ORIGIN_Y + 240],
+          [DEMO_VECTOR_ORIGIN_X - 60, DEMO_VECTOR_ORIGIN_Y + 160]
+        ]
+      ]
+    },
+    properties: { label: 'Purple polygon with a hole' }
+  }
+];
+
+// Per-feature styling (VEC-2), keyed by `id` so each of the four demo features reads visibly
+// differently from its neighbors, per the ticket: Point A is left at VectorLayer's own built-in
+// default (small red-ish circle — the "what you get for free" baseline), Point B is deliberately
+// bigger and a different color, the line is dashed in a color neither point uses, and the polygon
+// gets both a translucent fill AND an explicit stroke (Polygon strokes are opt-in — see
+// VectorLayer's own DEFAULT_LINE_WIDTH comment for why there's no fallback stroke color for
+// polygons the way there is for LineString). Icons (`icon`/`iconSize`) are deliberately unused —
+// there are no image assets in this project (docs/ has none) and that part of the VEC-2 API is
+// already covered by vector_layer.test.ts; adding one here just to add one isn't this ticket's job.
+function demoVectorStyle(feature: Feature): FeatureStyle | null | undefined {
+  switch (feature.id) {
+    case 'demo-point-default':
+      return {}; // every field falls back to VectorLayer's own default point style.
+    case 'demo-point-styled':
+      return { fillStyle: 'rgb(20, 160, 140)', pointRadius: 10 };
+    case 'demo-line':
+      return { strokeStyle: 'rgb(255, 140, 0)', lineWidth: 3, dash: [10, 6] };
+    case 'demo-polygon-with-hole':
+      return { fillStyle: 'rgba(150, 40, 200, 0.35)', strokeStyle: 'rgb(110, 20, 150)', lineWidth: 2 };
+    default:
+      return {};
+  }
+}
+
 export const LAYERS: Record<string, Layer> = {
   background: new Layer({
     name: 'Background',
@@ -677,6 +779,18 @@ export const LAYERS: Record<string, Layer> = {
     color: 'red',
     onDraw: drawDebugInfo,
     visible: DEBUG
+  }),
+
+  // VEC-7: demo-only overlay over the VEC-1/VEC-2/VEC-4 VectorLayer stack — see the big comment
+  // above demoVectorFeatures for the deliberate MVT/tiled-source scope-narrowing. `visible: false`
+  // like most overlays in this file (Strava heat map, Map tiles debug, ...) — not part of the
+  // default view, opt in via the Layers folder's checkbox (src/index.ts's overlayLayers).
+  demo_vector: new VectorLayer({
+    name: 'Демо: векторный слой',
+    kind: 'local',
+    visible: false,
+    features: demoVectorFeatures,
+    style: demoVectorStyle
   })
 };
 
@@ -694,5 +808,6 @@ export const ALL_LAYERS: Layer[] = [
   LAYERS.xkcd_debug,
   LAYERS.map_tiles_strava,
   LAYERS.mandelbrot_tiles,
-  LAYERS.debug
+  LAYERS.debug,
+  LAYERS.demo_vector
 ];
