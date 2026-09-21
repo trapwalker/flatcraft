@@ -1531,15 +1531,34 @@ export interface LevelParams {
   tileIndexBounds?: WorldBounds;
 }
 
-// AFF-4: the combined matrix mapping a tile's *index* (integer ix/iy, one unit = one tile) to
-// actual canvas pixel coordinates — camera pan/zoom, this layer's own shift/scale/rotation, and
-// the tile-index-to-world-units scaling, composed into one Mat2D instead of the old inline
-// `x*tile_size - c.x + w/2` arithmetic. Exported and DOM-free specifically so it's unit-testable
-// (see map.test.ts) against that old formula, independent of any live canvas/browser.
+// AFF-4/VEC-1: the combined matrix mapping a point in this layer's own local drawing space to
+// actual canvas pixel coordinates — camera pan/zoom/rotation composed with this layer's own
+// shift/scale/rotation, as one Mat2D. This is the shared core of `computeTileGridMatrix` (which
+// tacks on a further tile-index-to-world-units scaling below) and of `VectorLayer.draw`
+// (src/vector_layer.ts), which draws directly in shared world units — pulled out here, rather
+// than duplicated in both, so the two layer kinds are guaranteed to agree pixel-for-pixel on
+// where "the same world point" lands on screen. Exported and DOM-free specifically so it's
+// unit-testable (see map.test.ts) independent of any live canvas/browser.
 //
 // `layerTransform` is intentionally not required to be parented to `camera` (see Layer.transform's
 // comment on why that wouldn't compose the way it sounds) — this function reads its `worldMatrix`
 // either way, so it works whether or not a caller has parented it to something.
+export function computeLayerToScreenMatrix(
+  camera: Transform2D,
+  layerTransform: Transform2D,
+  canvasWidth: number,
+  canvasHeight: number
+): Mat2D {
+  return Mat2D.translation(canvasWidth / 2, canvasHeight / 2)
+    .multiply(camera.worldMatrix.invert())
+    .multiply(layerTransform.worldMatrix);
+}
+
+// AFF-4: the combined matrix mapping a tile's *index* (integer ix/iy, one unit = one tile) to
+// actual canvas pixel coordinates — computeLayerToScreenMatrix above, plus the tile-index-to-
+// world-units scaling, composed into one Mat2D instead of the old inline
+// `x*tile_size - c.x + w/2` arithmetic. Exported and DOM-free specifically so it's unit-testable
+// (see map.test.ts) against that old formula, independent of any live canvas/browser.
 export function computeTileGridMatrix(
   camera: Transform2D,
   layerTransform: Transform2D,
@@ -1547,9 +1566,7 @@ export function computeTileGridMatrix(
   canvasHeight: number,
   world_tile_edge: number
 ): Mat2D {
-  return Mat2D.translation(canvasWidth / 2, canvasHeight / 2)
-    .multiply(camera.worldMatrix.invert())
-    .multiply(layerTransform.worldMatrix)
+  return computeLayerToScreenMatrix(camera, layerTransform, canvasWidth, canvasHeight)
     .multiply(Mat2D.scaling(world_tile_edge, world_tile_edge));
 }
 

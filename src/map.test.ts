@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Transform2D } from './transform2d.js';
+import { Mat2D } from './mat2d.js';
 import {
   classifyWheelEvent,
+  computeLayerToScreenMatrix,
   computeTileGridMatrix,
   computeTileIndexBounds,
   hasCrossedActivationThreshold,
@@ -146,6 +148,81 @@ describe('computeTileGridMatrix', () => {
     const dist0 = b0.x - a0.x;
     const dist1 = b1.x - a1.x;
     expect(dist1).toBeCloseTo(dist0 * 2, 6);
+  });
+});
+
+// VEC-1: computeLayerToScreenMatrix is computeTileGridMatrix's shared core, factored out so
+// VectorLayer (src/vector_layer.ts, which draws directly in shared world units, with no notion of
+// a "tile edge") can place features through the exact same camera+layer composition TiledLayer
+// uses, rather than a second, only-hopefully-consistent implementation.
+describe('computeLayerToScreenMatrix', () => {
+  it.each(CASES)('matches computeTileGridMatrix with the world_tile_edge scaling factored back out: $label', (c) => {
+    const camera = cameraFor(c.position, c.zf);
+    const layerTransform = new Transform2D();
+    const z = Math.ceil(Math.log2(c.zf));
+    const world_tile_edge = c.tileSizeNative / Math.pow(2, z);
+
+    const layerMatrix = computeLayerToScreenMatrix(camera, layerTransform, c.w, c.h);
+    const tileMatrix = computeTileGridMatrix(camera, layerTransform, c.w, c.h, world_tile_edge);
+    const reconstructed = layerMatrix.multiply(Mat2D.scaling(world_tile_edge, world_tile_edge));
+
+    expect(reconstructed.equals(tileMatrix)).toBe(true);
+  });
+
+  it('is the identity translated to the canvas center, for identity camera/layer transforms', () => {
+    const camera = new Transform2D();
+    const layerTransform = new Transform2D();
+    const matrix = computeLayerToScreenMatrix(camera, layerTransform, 800, 600);
+
+    const p = matrix.transformPoint({ x: 10, y: -5 });
+    expect(p.x).toBeCloseTo(410, 9);
+    expect(p.y).toBeCloseTo(295, 9);
+  });
+
+  it('places a world point at the canvas center exactly when it equals the camera position', () => {
+    const c = CASES[1];
+    const camera = cameraFor(c.position, c.zf);
+    const layerTransform = new Transform2D();
+    const matrix = computeLayerToScreenMatrix(camera, layerTransform, c.w, c.h);
+
+    // A point in the layer's local space that, after the layer's own (identity) transform, lands
+    // exactly on the camera's world position should map to the exact center of the canvas.
+    const p = matrix.transformPoint(c.position);
+    expect(p.x).toBeCloseTo(c.w / 2, 6);
+    expect(p.y).toBeCloseTo(c.h / 2, 6);
+  });
+
+  it('a nonzero layer shift moves a point by exactly that world-space offset, scaled by zoom', () => {
+    const c = CASES[0];
+    const camera = cameraFor(c.position, c.zf);
+    const identity = new Transform2D();
+    const shifted = new Transform2D();
+    const shift = { x: 300, y: -750 };
+    shifted.setTranslation(shift.x, shift.y);
+
+    const m0 = computeLayerToScreenMatrix(camera, identity, c.w, c.h);
+    const m1 = computeLayerToScreenMatrix(camera, shifted, c.w, c.h);
+
+    const p0 = m0.transformPoint({ x: 42, y: -17 });
+    const p1 = m1.transformPoint({ x: 42, y: -17 });
+
+    expect(p1.x - p0.x).toBeCloseTo(shift.x * c.zf, 6);
+    expect(p1.y - p0.y).toBeCloseTo(shift.y * c.zf, 6);
+  });
+
+  it('a camera rotation rotates a point around the canvas center', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    camera.rotation = Math.PI / 2;
+    const layerTransform = new Transform2D();
+    const matrix = computeLayerToScreenMatrix(camera, layerTransform, 800, 600);
+
+    // The matrix applies camera.worldMatrix.invert(), i.e. rotation(-camera.rotation) here — a
+    // world point straight "east" of the origin (100, 0) therefore lands straight "up" from the
+    // canvas center (matches MapWidget.rotateBy's own doc comment: increasing `rotation` turns
+    // the displayed content counter-clockwise, not clockwise).
+    const p = matrix.transformPoint({ x: 100, y: 0 });
+    expect(p.x).toBeCloseTo(400, 6);
+    expect(p.y).toBeCloseTo(200, 6);
   });
 });
 
