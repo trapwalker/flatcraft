@@ -12,6 +12,7 @@ import {
 } from './vector_layer.js';
 import type {
   Feature,
+  FeatureStyle,
   LineStringGeometry,
   MultiPolygonGeometry,
   PointGeometry,
@@ -28,18 +29,31 @@ import type {
 // it deliberately has NO `setTransform` — see the "never uses ctx.setTransform" test below, which
 // relies on that: if VectorLayer.draw ever called it, this mock would throw "not a function"
 // rather than silently accept it.
+//
+// VEC-2 addition: `lineWidth`/`dash` are recorded the same way `fillStyle`/`strokeStyle` already
+// were — snapshotted onto the fill()/stroke() RecordedCall at the moment it happens, not as their
+// own separate entries in `calls`. That's deliberate: `ctx.lineWidth = ...` is a plain property
+// set (same as fillStyle/strokeStyle always were) and `ctx.setLineDash(...)` updates internal mock
+// state rather than pushing its own `calls` entry — so every VEC-1 test asserting the exact
+// sequence of recorded method names (e.g. the LineString "emits moveTo followed by..." test below)
+// keeps passing completely unchanged, while new VEC-2 tests can still read the lineWidth/dash that
+// were actually in effect at each fill()/stroke() by reading them off that call's record.
 interface RecordedCall {
   method: string;
   args: unknown[];
   fillStyle?: string;
   strokeStyle?: string;
+  lineWidth?: number;
+  dash?: number[];
 }
 
 function createMockCtx(): { ctx: CanvasRenderingContext2D; calls: RecordedCall[] } {
   const calls: RecordedCall[] = [];
+  let currentDash: number[] = [];
   const ctx = {
     fillStyle: '',
     strokeStyle: '',
+    lineWidth: 1,
     beginPath: () => { calls.push({ method: 'beginPath', args: [] }); },
     moveTo: (x: number, y: number) => { calls.push({ method: 'moveTo', args: [x, y] }); },
     lineTo: (x: number, y: number) => { calls.push({ method: 'lineTo', args: [x, y] }); },
@@ -47,10 +61,32 @@ function createMockCtx(): { ctx: CanvasRenderingContext2D; calls: RecordedCall[]
     arc: (x: number, y: number, r: number, start: number, end: number) => {
       calls.push({ method: 'arc', args: [x, y, r, start, end] });
     },
-    fill: (rule?: CanvasFillRule) => { calls.push({ method: 'fill', args: [rule], fillStyle: ctx.fillStyle }); },
-    stroke: () => { calls.push({ method: 'stroke', args: [], strokeStyle: ctx.strokeStyle }); }
+    // Deliberately does NOT push its own `calls` entry (see interface comment above) — it just
+    // updates the mock's internal "current dash" state, exactly like a real
+    // CanvasRenderingContext2D would update its internal line-dash-list state. The bleed-regression
+    // test below relies on this being real, sticky state that persists across draw() calls within
+    // the same mock ctx, same as the real canvas API.
+    setLineDash: (segments: number[]) => { currentDash = segments.slice(); },
+    drawImage: (image: CanvasImageSource, dx: number, dy: number, dWidth?: number, dHeight?: number) => {
+      calls.push({ method: 'drawImage', args: [image, dx, dy, dWidth, dHeight] });
+    },
+    fill: (rule?: CanvasFillRule) => {
+      calls.push({ method: 'fill', args: [rule], fillStyle: ctx.fillStyle, lineWidth: ctx.lineWidth, dash: currentDash.slice() });
+    },
+    stroke: () => {
+      calls.push({ method: 'stroke', args: [], strokeStyle: ctx.strokeStyle, lineWidth: ctx.lineWidth, dash: currentDash.slice() });
+    }
   };
   return { ctx: ctx as unknown as CanvasRenderingContext2D, calls };
+}
+
+/** A DOM-free CanvasImageSource stand-in for icon tests: in vitest's default (node) environment,
+ * `HTMLImageElement`/`HTMLCanvasElement`/etc. don't exist at all, so `getNaturalIconSize`'s
+ * instanceof checks all fall through to its final generic `{width, height}` fallback branch —
+ * this object is shaped exactly to hit that branch, deliberately, the same way this whole file
+ * avoids jsdom/a real canvas everywhere else. */
+function fakeIcon(width: number, height: number): CanvasImageSource {
+  return { width, height } as unknown as CanvasImageSource;
 }
 
 function fakeMap(ctx: CanvasRenderingContext2D, camera: Transform2D, width: number, height: number): MapWidget {
@@ -332,5 +368,165 @@ describe('VectorLayer.draw', () => {
     // Would throw here if draw() ever invoked ctx.setTransform — see comment above.
     expect(() => layer.draw(fakeMap(ctx, camera, 800, 600))).not.toThrow();
     expect(calls.some((c) => c.method === 'setTransform')).toBe(false);
+  });
+});
+
+/// draw() style option (VEC-2) ////////////////////////////////////////////////////////////////////
+
+describe('VectorLayer.draw with a style callback', () => {
+  it('applies a custom fillStyle/strokeStyle/lineWidth/dash/pointRadius from the style callback', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const line: LineStringGeometry = { type: 'LineString', coordinates: [[0, 0], [10, 0]] };
+    const point: PointGeometry = { type: 'Point', coordinates: [0, 0] };
+    const layer = new VectorLayer({
+      features: [{ id: 'line', geometry: line }, { id: 'point', geometry: point }],
+      style: (feature): FeatureStyle =>
+        feature.id === 'line'
+          ? { strokeStyle: 'rgb(1,2,3)', lineWidth: 7, dash: [3, 1] }
+          : { fillStyle: 'rgb(9,9,9)', pointRadius: 20 }
+    });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    const strokeCall = calls.find((c) => c.method === 'stroke')!;
+    expect(strokeCall.strokeStyle).toBe('rgb(1,2,3)');
+    expect(strokeCall.lineWidth).toBe(7);
+    expect(strokeCall.dash).toEqual([3, 1]);
+
+    const arcCall = calls.find((c) => c.method === 'arc')!;
+    expect(arcCall.args[2]).toBe(20); // radius
+
+    const fillCall = calls.find((c) => c.method === 'fill')!;
+    expect(fillCall.fillStyle).toBe('rgb(9,9,9)');
+  });
+
+  it('a style returning null/undefined skips only that feature, preserving the draw order of the rest', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const layer = new VectorLayer({
+      features: [
+        { id: 'a', geometry: { type: 'Point', coordinates: [0, 0] } },
+        { id: 'skip', geometry: { type: 'Point', coordinates: [1, 1] } },
+        { id: 'b', geometry: { type: 'LineString', coordinates: [[0, 0], [1, 1]] } }
+      ],
+      style: (feature): FeatureStyle | null => (feature.id === 'skip' ? null : {})
+    });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    expect(calls.filter((c) => c.method === 'arc')).toHaveLength(1); // only feature 'a', not 'skip'
+    expect(calls.filter((c) => c.method === 'stroke')).toHaveLength(1); // feature 'b' still drawn
+    // Order preserved: the surviving arc() still precedes the surviving stroke().
+    const arcIndex = calls.findIndex((c) => c.method === 'arc');
+    const strokeIndex = calls.findIndex((c) => c.method === 'stroke');
+    expect(arcIndex).toBeLessThan(strokeIndex);
+  });
+
+  it('an undefined return from style also skips the feature (not just null)', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const layer = new VectorLayer({
+      features: [{ geometry: { type: 'Point', coordinates: [0, 0] } }],
+      style: (): FeatureStyle | undefined => undefined
+    });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+    expect(calls).toEqual([]);
+  });
+
+  // The bug class the ticket specifically calls out: ctx.lineWidth/ctx.setLineDash are canvas
+  // *state*, not per-call arguments, so they persist across stroke() calls unless explicitly reset
+  // every time. A feature styled with a thick dashed line must not leak that onto the next
+  // feature's stroke just because that next feature's style doesn't mention dash/lineWidth at all.
+  it('dash/lineWidth do not bleed from one LineString feature onto the next', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const layer = new VectorLayer({
+      features: [
+        { id: 'thick-dashed', geometry: { type: 'LineString', coordinates: [[0, 0], [1, 0]] } },
+        { id: 'plain', geometry: { type: 'LineString', coordinates: [[0, 0], [1, 0]] } }
+      ],
+      style: (feature): FeatureStyle =>
+        feature.id === 'thick-dashed' ? { lineWidth: 9, dash: [5, 5] } : {} // second feature: all defaults
+    });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    const strokeCalls = calls.filter((c) => c.method === 'stroke');
+    expect(strokeCalls).toHaveLength(2);
+    expect(strokeCalls[0].lineWidth).toBe(9);
+    expect(strokeCalls[0].dash).toEqual([5, 5]);
+    // The second feature explicitly did not ask for a dash/thick line — it must render solid at
+    // the default width, not inherit the first feature's canvas state.
+    expect(strokeCalls[1].lineWidth).toBe(1);
+    expect(strokeCalls[1].dash).toEqual([]);
+  });
+
+  it('a Point with an icon draws via drawImage (centered, using the explicit iconSize) instead of a filled circle', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const icon = fakeIcon(100, 100); // deliberately different from iconSize below, to prove iconSize wins
+    const layer = new VectorLayer({
+      features: [{ geometry: { type: 'Point', coordinates: [100, 50] } }],
+      style: (): FeatureStyle => ({ icon, iconSize: [20, 10] })
+    });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    expect(calls.filter((c) => c.method === 'arc')).toHaveLength(0);
+    expect(calls.filter((c) => c.method === 'fill')).toHaveLength(0);
+    const drawImageCall = calls.find((c) => c.method === 'drawImage')!;
+    expect(drawImageCall).toBeDefined();
+    // Center point is (400 + 100, 300 + 50) = (500, 350); top-left is offset by -width/2, -height/2.
+    expect(drawImageCall.args).toEqual([icon, 500 - 10, 350 - 5, 20, 10]);
+  });
+
+  it('a Point with an icon but no iconSize falls back to the image\'s natural size', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const icon = fakeIcon(40, 16); // no HTMLImageElement/HTMLCanvasElement in this DOM-free test env,
+    // so getNaturalIconSize falls through to its generic {width, height} branch — see fakeIcon's comment.
+    const layer = new VectorLayer({
+      features: [{ geometry: { type: 'Point', coordinates: [0, 0] } }],
+      style: (): FeatureStyle => ({ icon })
+    });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    const drawImageCall = calls.find((c) => c.method === 'drawImage')!;
+    expect(drawImageCall.args).toEqual([icon, 400 - 20, 300 - 8, 40, 16]);
+  });
+
+  it('Polygon with strokeStyle set: stroke() follows fill("evenodd") with the given lineWidth', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const polygon: PolygonGeometry = {
+      type: 'Polygon',
+      coordinates: [[[-10, -10], [10, -10], [10, 10], [-10, 10]]]
+    };
+    const layer = new VectorLayer({
+      features: [{ geometry: polygon }],
+      style: (): FeatureStyle => ({ strokeStyle: 'rgb(7,7,7)', lineWidth: 3, dash: [2, 2] })
+    });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    const fillIndex = calls.findIndex((c) => c.method === 'fill');
+    const strokeIndex = calls.findIndex((c) => c.method === 'stroke');
+    expect(fillIndex).toBeGreaterThanOrEqual(0);
+    expect(strokeIndex).toBe(fillIndex + 1); // stroke immediately follows fill, same path
+    expect(calls[strokeIndex].strokeStyle).toBe('rgb(7,7,7)');
+    expect(calls[strokeIndex].lineWidth).toBe(3);
+    expect(calls[strokeIndex].dash).toEqual([2, 2]);
+  });
+
+  it('Polygon without strokeStyle in its style: no stroke() call at all (same as VEC-1 default)', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const polygon: PolygonGeometry = {
+      type: 'Polygon',
+      coordinates: [[[-10, -10], [10, -10], [10, 10], [-10, 10]]]
+    };
+    const layer = new VectorLayer({
+      features: [{ geometry: polygon }],
+      style: (): FeatureStyle => ({ fillStyle: 'rgb(5,5,5)' }) // no strokeStyle
+    });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    expect(calls.filter((c) => c.method === 'stroke')).toHaveLength(0);
   });
 });
