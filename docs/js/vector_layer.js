@@ -365,14 +365,26 @@ export class VectorLayer extends Layer {
             }
         }
         // VEC-6: ctx.font/textAlign/textBaseline are shared canvas *state* too, just like
-        // lineWidth/dash below — reset to the plain canvas defaults ('', 'start', 'alphabetic') so a
-        // layer drawn after this one doesn't inherit whatever the last label left behind. Unlike the
-        // lineWidth/dash reset (which fixes a real, already-hit cross-layer leak — see VEC-2's
-        // retrospective in BACKLOG.md), no such leak from THIS state is known to matter today —
-        // src/layers.ts's drawTileDebug/drawDebugInfo already set their own font/textAlign
-        // unconditionally before every use (confirmed via `grep` while building this ticket) — but the
-        // same discipline is applied here anyway, for whatever less careful layer comes next.
-        ctx.font = '';
+        // lineWidth/dash below — reset to the plain canvas defaults so a layer drawn after this one
+        // doesn't inherit whatever the last label left behind. Unlike the lineWidth/dash reset (which
+        // fixes a real, already-hit cross-layer leak — see VEC-2's retrospective in BACKLOG.md), no such
+        // leak from THIS state is known to matter today — src/layers.ts's drawTileDebug/drawDebugInfo
+        // already set their own font/textAlign unconditionally before every use (confirmed via `grep`
+        // while building this ticket) — but the same discipline is applied here anyway, for whatever
+        // less careful layer comes next.
+        //
+        // Found during independent review (not caught by this file's own DOM-free mock ctx, which
+        // accepts any string as a plain property write): `ctx.font = ''` is NOT a working reset on a
+        // real CanvasRenderingContext2D. Per the HTML spec, assigning `font` a value that fails to parse
+        // as a CSS <font> shorthand is ignored outright — the property silently keeps its previous
+        // value. An empty string is not a valid <font> value (a <font> shorthand requires at least a
+        // size and a family), so `ctx.font = ''` here would leave the *previous* label's font (e.g.
+        // '12px sans-serif') in effect on a real browser, not reset anything — the mock ctx has no such
+        // validation, so a test asserting `ctx.font === ''` after this line passes despite the real
+        // implementation doing nothing. '10px sans-serif' is the actual spec-default initial value of
+        // `font` on a fresh 2D context, and — unlike '' — is itself a valid <font> value, so assigning
+        // it here really does take effect.
+        ctx.font = '10px sans-serif';
         ctx.textAlign = 'start';
         ctx.textBaseline = 'alphabetic';
         // ctx.lineWidth/ctx.setLineDash are shared canvas *state*, not scoped to this draw() call —

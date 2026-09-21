@@ -817,6 +817,13 @@ describe('VectorLayer.draw label rendering', () => {
   // Same reasoning as the existing lineWidth/dash reset test above (VEC-2): ctx.font/textAlign/
   // textBaseline are shared canvas *state*, so a layer drawn after this one must not inherit
   // whatever the last label left behind.
+  //
+  // Expects '10px sans-serif' for font, NOT '' — found during independent review: an empty string
+  // is not a valid CSS <font> value, and a real CanvasRenderingContext2D silently ignores (does not
+  // apply) an invalid assignment to `font`, unlike this mock's plain, unvalidated property write.
+  // '10px sans-serif' is the actual spec-default initial value AND a syntactically valid one, so
+  // assigning it is a reset that would really take effect on a real canvas — see vector_layer.ts's
+  // own comment on this same line for the full explanation.
   it('resets ctx.font/textAlign/textBaseline to plain canvas defaults after draw() returns', () => {
     const camera = cameraFor({ x: 0, y: 0 }, 1);
     const layer = new VectorLayer({
@@ -826,7 +833,7 @@ describe('VectorLayer.draw label rendering', () => {
     const { ctx } = createMockCtx();
     layer.draw(fakeMap(ctx, camera, 800, 600));
 
-    expect((ctx as unknown as { font: string }).font).toBe('');
+    expect((ctx as unknown as { font: string }).font).toBe('10px sans-serif');
     expect((ctx as unknown as { textAlign: string }).textAlign).toBe('start');
     expect((ctx as unknown as { textBaseline: string }).textBaseline).toBe('alphabetic');
   });
