@@ -3,14 +3,20 @@ import { Transform2D } from './transform2d.js';
 import { Mat2D } from './mat2d.js';
 import { computeLayerToScreenMatrix } from './map.js';
 import type { MapWidget } from './map.js';
-import { VECTOR_LAYER_FILL_COLOR, VECTOR_LAYER_LINE_COLOR, VECTOR_LAYER_POINT_COLOR } from './defines.js';
+import {
+  VECTOR_LAYER_FILL_COLOR,
+  VECTOR_LAYER_LABEL_COLOR,
+  VECTOR_LAYER_LINE_COLOR,
+  VECTOR_LAYER_POINT_COLOR
+} from './defines.js';
 import {
   VectorLayer,
   transformCoordinate,
   transformRing,
   getPolygonRingsScreenPoints,
   distanceToSegment,
-  pointInRings
+  pointInRings,
+  computeLabelAnchor
 } from './vector_layer.js';
 import type {
   Feature,
@@ -47,6 +53,9 @@ interface RecordedCall {
   strokeStyle?: string;
   lineWidth?: number;
   dash?: number[];
+  font?: string;
+  textAlign?: CanvasTextAlign;
+  textBaseline?: CanvasTextBaseline;
 }
 
 function createMockCtx(): { ctx: CanvasRenderingContext2D; calls: RecordedCall[]; getDash: () => number[] } {
@@ -56,6 +65,9 @@ function createMockCtx(): { ctx: CanvasRenderingContext2D; calls: RecordedCall[]
     fillStyle: '',
     strokeStyle: '',
     lineWidth: 1,
+    font: '',
+    textAlign: 'start' as CanvasTextAlign,
+    textBaseline: 'alphabetic' as CanvasTextBaseline,
     beginPath: () => { calls.push({ method: 'beginPath', args: [] }); },
     moveTo: (x: number, y: number) => { calls.push({ method: 'moveTo', args: [x, y] }); },
     lineTo: (x: number, y: number) => { calls.push({ method: 'lineTo', args: [x, y] }); },
@@ -77,6 +89,19 @@ function createMockCtx(): { ctx: CanvasRenderingContext2D; calls: RecordedCall[]
     },
     stroke: () => {
       calls.push({ method: 'stroke', args: [], strokeStyle: ctx.strokeStyle, lineWidth: ctx.lineWidth, dash: currentDash.slice() });
+    },
+    // VEC-6: same snapshot-onto-the-call convention fill()/stroke() already use above — font/
+    // fillStyle/textAlign/textBaseline are plain property sets (like fillStyle always was), so the
+    // call record captures whatever they were set to at the moment fillText actually ran.
+    fillText: (text: string, x: number, y: number) => {
+      calls.push({
+        method: 'fillText',
+        args: [text, x, y],
+        fillStyle: ctx.fillStyle,
+        font: ctx.font,
+        textAlign: ctx.textAlign,
+        textBaseline: ctx.textBaseline
+      });
     }
   };
   // Reads the mock's live internal dash state directly (not off a recorded call) — used by the
@@ -584,6 +609,226 @@ describe('VectorLayer.draw with a style callback', () => {
     layer.draw(fakeMap(ctx, camera, 800, 600));
 
     expect(calls.filter((c) => c.method === 'stroke')).toHaveLength(0);
+  });
+});
+
+/// computeLabelAnchor (DOM-free, VEC-6) ///////////////////////////////////////////////////////////
+
+describe('computeLabelAnchor (DOM-free)', () => {
+  it('Point without icon anchors above the circle, using pointRadius (or its default)', () => {
+    const geometry: PointGeometry = { type: 'Point', coordinates: [0, 0] };
+    // pointRadius 4 (the default) + LABEL_OFFSET_PX 4 = 8px above the point.
+    expect(computeLabelAnchor(geometry, {}, Mat2D.identity())).toEqual({
+      point: { x: 0, y: -8 },
+      textAlign: 'center',
+      textBaseline: 'bottom'
+    });
+  });
+
+  it('Point with icon anchors above the icon\'s half height, not pointRadius', () => {
+    const geometry: PointGeometry = { type: 'Point', coordinates: [0, 0] };
+    const icon = fakeIcon(999, 999); // deliberately different from iconSize, to prove iconSize wins
+    // half of iconSize height (10/2=5) + LABEL_OFFSET_PX 4 = 9px above the point.
+    expect(computeLabelAnchor(geometry, { icon, iconSize: [20, 10] }, Mat2D.identity())).toEqual({
+      point: { x: 0, y: -9 },
+      textAlign: 'center',
+      textBaseline: 'bottom'
+    });
+  });
+
+  it('LineString anchors at the vertex at the middle INDEX of the point list, not the midpoint by length', () => {
+    const geometry: LineStringGeometry = { type: 'LineString', coordinates: [[0, 0], [100, 0], [100, 100], [0, 100]] };
+    // floor(4 / 2) = 2 -> the THIRD point, (100, 100) - very far from the path's actual half-length.
+    expect(computeLabelAnchor(geometry, {}, Mat2D.identity())).toEqual({
+      point: { x: 100, y: 96 },
+      textAlign: 'center',
+      textBaseline: 'bottom'
+    });
+  });
+
+  it('LineString with zero points has no anchor at all', () => {
+    const geometry: LineStringGeometry = { type: 'LineString', coordinates: [] };
+    expect(computeLabelAnchor(geometry, {}, Mat2D.identity())).toBeUndefined();
+  });
+
+  it('Polygon anchors at the centroid of the OUTER ring, excluding the closing duplicate point, ignoring holes', () => {
+    const geometry: PolygonGeometry = {
+      type: 'Polygon',
+      coordinates: [
+        [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]], // closed outer ring (5 points, first repeated last)
+        [[3, 3], [6, 3], [6, 6], [3, 6], [3, 3]] // hole — must not affect the centroid at all
+      ]
+    };
+    // Average of the 4 DISTINCT outer-ring vertices (dropping the closing duplicate): (5, 5).
+    // Naively averaging all 5 points (including the duplicate) would instead give (4, 4).
+    expect(computeLabelAnchor(geometry, {}, Mat2D.identity())).toEqual({
+      point: { x: 5, y: 5 },
+      textAlign: 'center',
+      textBaseline: 'middle'
+    });
+  });
+
+  it('MultiPolygon anchors at the outer-ring centroid of the FIRST polygon only', () => {
+    const geometry: MultiPolygonGeometry = {
+      type: 'MultiPolygon',
+      coordinates: [
+        [[[0, 0], [4, 0], [4, 4], [0, 4], [0, 0]]], // first polygon: centroid (2, 2)
+        [[[100, 100], [200, 100], [200, 200], [100, 200], [100, 100]]] // second polygon: ignored
+      ]
+    };
+    expect(computeLabelAnchor(geometry, {}, Mat2D.identity())).toEqual({
+      point: { x: 2, y: 2 },
+      textAlign: 'center',
+      textBaseline: 'middle'
+    });
+  });
+});
+
+/// draw() label rendering (VEC-6) /////////////////////////////////////////////////////////////////
+
+describe('VectorLayer.draw label rendering', () => {
+  it('a feature with no label set never calls ctx.fillText', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const layer = new VectorLayer({ features: [{ geometry: { type: 'Point', coordinates: [0, 0] } }] });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+    expect(calls.filter((c) => c.method === 'fillText')).toHaveLength(0);
+  });
+
+  it('Point without icon: exactly one fillText, positioned above the circle, in the default label color', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const layer = new VectorLayer({
+      features: [{ geometry: { type: 'Point', coordinates: [0, 0] } }],
+      style: (): FeatureStyle => ({ label: 'Hello' })
+    });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    const fillTextCalls = calls.filter((c) => c.method === 'fillText');
+    expect(fillTextCalls).toHaveLength(1);
+    expect(fillTextCalls[0].args).toEqual(['Hello', 400, 292]); // center (400, 300) minus radius+offset (4+4)
+    expect(fillTextCalls[0].textAlign).toBe('center');
+    expect(fillTextCalls[0].textBaseline).toBe('bottom');
+    expect(fillTextCalls[0].fillStyle).toBe(VECTOR_LAYER_LABEL_COLOR);
+  });
+
+  it('Point with icon: label sits above the icon\'s bounding box, not a circle', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const icon = fakeIcon(100, 100);
+    const layer = new VectorLayer({
+      features: [{ geometry: { type: 'Point', coordinates: [100, 50] } }],
+      style: (): FeatureStyle => ({ icon, iconSize: [20, 10], label: 'Marker' })
+    });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    const fillTextCall = calls.find((c) => c.method === 'fillText')!;
+    // Center (500, 350); half icon height 5, offset 4 => y = 341.
+    expect(fillTextCall.args).toEqual(['Marker', 500, 341]);
+  });
+
+  it('LineString: label positioned at the middle-INDEX vertex, not the midpoint by length', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const line: LineStringGeometry = { type: 'LineString', coordinates: [[0, 0], [10, 0], [10, 10], [0, 10]] };
+    const layer = new VectorLayer({ features: [{ geometry: line }], style: (): FeatureStyle => ({ label: 'Road' }) });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    const fillTextCall = calls.find((c) => c.method === 'fillText')!;
+    // floor(4 / 2) = 2 -> third point (10, 10) -> screen (410, 310); label 4px above that.
+    expect(fillTextCall.args).toEqual(['Road', 410, 306]);
+    expect(fillTextCall.textAlign).toBe('center');
+    expect(fillTextCall.textBaseline).toBe('bottom');
+  });
+
+  it('LineString with zero points draws no label either, same as it draws no line', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const layer = new VectorLayer({
+      features: [{ geometry: { type: 'LineString', coordinates: [] } }],
+      style: (): FeatureStyle => ({ label: 'Ghost road' })
+    });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+    expect(calls.filter((c) => c.method === 'fillText')).toHaveLength(0);
+  });
+
+  it('Polygon with a hole: label positioned at the OUTER ring\'s centroid, unaffected by the hole', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const polygon: PolygonGeometry = {
+      type: 'Polygon',
+      coordinates: [
+        [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]], // closed outer ring
+        [[3, 3], [6, 3], [6, 6], [3, 6], [3, 3]] // hole
+      ]
+    };
+    const layer = new VectorLayer({ features: [{ geometry: polygon }], style: (): FeatureStyle => ({ label: 'Zone' }) });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    const fillTextCall = calls.find((c) => c.method === 'fillText')!;
+    // Outer-ring centroid (excluding the closing duplicate) is (5, 5) -> screen (405, 305).
+    expect(fillTextCall.args).toEqual(['Zone', 405, 305]);
+    expect(fillTextCall.textAlign).toBe('center');
+    expect(fillTextCall.textBaseline).toBe('middle');
+  });
+
+  it('MultiPolygon: label positioned at the FIRST polygon\'s outer-ring centroid', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const multi: MultiPolygonGeometry = {
+      type: 'MultiPolygon',
+      coordinates: [
+        [[[0, 0], [4, 0], [4, 4], [0, 4], [0, 0]]],
+        [[[100, 100], [200, 100], [200, 200], [100, 200], [100, 100]]]
+      ]
+    };
+    const layer = new VectorLayer({ features: [{ geometry: multi }], style: (): FeatureStyle => ({ label: 'Area' }) });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    const fillTextCall = calls.find((c) => c.method === 'fillText')!;
+    // First polygon's centroid (2, 2) -> screen (402, 302).
+    expect(fillTextCall.args).toEqual(['Area', 402, 302]);
+  });
+
+  it('labelColor overrides the default label color', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const layer = new VectorLayer({
+      features: [{ geometry: { type: 'Point', coordinates: [0, 0] } }],
+      style: (): FeatureStyle => ({ label: 'Custom', labelColor: 'rgb(9,8,7)' })
+    });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    const fillTextCall = calls.find((c) => c.method === 'fillText')!;
+    expect(fillTextCall.fillStyle).toBe('rgb(9,8,7)');
+  });
+
+  it('a feature whose style() returns null/undefined draws no label at all (same early-continue as the shape itself)', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const layer = new VectorLayer({
+      features: [{ id: 'hidden', geometry: { type: 'Point', coordinates: [0, 0] } }],
+      style: (): FeatureStyle | null => null
+    });
+    const { ctx, calls } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+    expect(calls.filter((c) => c.method === 'fillText')).toHaveLength(0);
+  });
+
+  // Same reasoning as the existing lineWidth/dash reset test above (VEC-2): ctx.font/textAlign/
+  // textBaseline are shared canvas *state*, so a layer drawn after this one must not inherit
+  // whatever the last label left behind.
+  it('resets ctx.font/textAlign/textBaseline to plain canvas defaults after draw() returns', () => {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const layer = new VectorLayer({
+      features: [{ geometry: { type: 'Point', coordinates: [0, 0] } }],
+      style: (): FeatureStyle => ({ label: 'Leftover' })
+    });
+    const { ctx } = createMockCtx();
+    layer.draw(fakeMap(ctx, camera, 800, 600));
+
+    expect((ctx as unknown as { font: string }).font).toBe('');
+    expect((ctx as unknown as { textAlign: string }).textAlign).toBe('start');
+    expect((ctx as unknown as { textBaseline: string }).textBaseline).toBe('alphabetic');
   });
 });
 

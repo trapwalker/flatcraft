@@ -8,15 +8,36 @@
 //
 // VEC-4 adds hit-testing (getFeatureAt: point-in-polygon, distance-to-segment, point/icon
 // bounding-box) and click/hover interactivity (enableFeatureEvents), working directly against
-// `this.features` — still just a plain in-memory array. Still fixed-in-advance, out of scope here
-// (see BACKLOG.md, "Фаза 7"): any notion of a data *source* — static or tiled (VEC-3a/b/c),
-// billboard labels (VEC-6), and the demo wiring in src/layers.ts/src/index.ts (VEC-7).
-// VectorSource (VEC-3a) is a separate later abstraction, not anticipated here.
+// `this.features` — still just a plain in-memory array.
+//
+// VEC-6 adds per-feature billboard text labels (FeatureStyle.label/labelColor, drawn via
+// ctx.fillText at a geometry-type-dependent anchor point — see computeLabelAnchor below). "Billboard"
+// here needs NO special mechanism at all, unlike a typical map library where un-rotating text against
+// a rotating map view takes deliberate work: this codebase's canvas is NEVER globally rotated in the
+// first place (no ctx.rotate/ctx.setTransform on the camera's angle anywhere — see the ROT-4
+// retrospective in BACKLOG.md and the "never calls ctx.setTransform" comment/test below) — every
+// geometry coordinate is hand-transformed into a screen point BEFORE it reaches a ctx drawing call,
+// so the whole canvas is always in plain screen space. Text drawn with ctx.fillText at an already-
+// computed screen point is therefore automatically billboard (it never rotates with the map) with no
+// flag or extra transform needed — see BACKLOG.md's ROT-4-billboard retrospective, which reached the
+// same conclusion for drawTileDebug's debug labels ("a separate `billboard: boolean` flag wasn't
+// needed — 'don't rotate, but position correctly' was the only sensible behavior"). VEC-6's job is
+// exactly that "position correctly" half: computing the right anchor point per geometry type.
+//
+// Still fixed-in-advance, out of scope here (see BACKLOG.md, "Фаза 7"): any notion of a data
+// *source* — static or tiled (VEC-3a/b/c) — and the demo wiring in src/layers.ts/src/index.ts
+// (VEC-7, already done separately). VectorSource (VEC-3a) is a separate later abstraction, not
+// anticipated here.
 
 import type { Mat2D } from './mat2d.js';
 import { computeLayerToScreenMatrix, isTap, Layer } from './map.js';
 import type { LayerOptions, MapWidget } from './map.js';
-import { VECTOR_LAYER_FILL_COLOR, VECTOR_LAYER_LINE_COLOR, VECTOR_LAYER_POINT_COLOR } from './defines.js';
+import {
+  VECTOR_LAYER_FILL_COLOR,
+  VECTOR_LAYER_LABEL_COLOR,
+  VECTOR_LAYER_LINE_COLOR,
+  VECTOR_LAYER_POINT_COLOR
+} from './defines.js';
 
 /// Geometry /////////////////////////////////////////////////////////////////////////////////////
 // GeoJSON-*shaped* (same coordinate nesting/field names, so a real GeoJSON `Feature.geometry`
@@ -79,6 +100,12 @@ export interface FeatureStyle {
   pointRadius?: number; // Point circle radius in CSS pixels — not matrix-scaled, same as VEC-1.
   icon?: CanvasImageSource; // If set, Point is drawn via ctx.drawImage instead of a filled circle.
   iconSize?: [number, number]; // drawImage width/height; defaults to the image's natural size.
+  // VEC-6: billboard text label drawn on top of the feature's own geometry (see computeLabelAnchor
+  // below for the per-geometry-type anchor point). Omitted, or an empty string, means "no label at
+  // all for this feature" — unlike the other fields above, there is no fallback default for the text
+  // itself, only for its color (labelColor).
+  label?: string;
+  labelColor?: string; // defaults to VECTOR_LAYER_LABEL_COLOR (src/defines.ts) when label is set.
 }
 
 /**
@@ -118,6 +145,13 @@ const POINT_RADIUS_PX = 4;
 // constant ever affects draw() above.
 const MIN_HIT_RADIUS_PX = 8; // minimum click radius around a Point, even if drawn smaller
 const MIN_LINE_HIT_TOLERANCE_PX = 5; // minimum click distance-to-line, even if drawn thinner
+
+// VEC-6: fixed MVP label appearance — not exposed through FeatureStyle (only the label text and
+// color are data-driven; see FeatureStyle.label/labelColor above). This is a deliberate scope
+// decision for this S-sized ticket, not an oversight: a real font/offset-per-style knob can follow
+// later if a use case actually needs it.
+const LABEL_FONT = '12px sans-serif';
+const LABEL_OFFSET_PX = 4; // gap between a feature's own anchor point and its label text
 
 // VEC-1's fixed behavior, preserved bit-for-bit as the per-geometry-type merge-in default for
 // whatever a feature's style leaves unset (see the switch in draw() below) — including when
@@ -240,6 +274,82 @@ export function pointInRings(p: XY, rings: XY[][]): boolean {
     }
   }
   return inside;
+}
+
+/// Pure, DOM-free label-anchor math (VEC-6) ///////////////////////////////////////////////////////
+// Same split-out-for-testability reasoning as the coordinate/hit-test math above: no
+// CanvasRenderingContext2D involved, only already screen-transformed points — see
+// vector_layer.test.ts's computeLabelAnchor tests.
+
+/** Where to draw a feature's label, and how to align the text relative to that point — bundled
+ * together because the right alignment is a fixed function of *which geometry type* produced the
+ * anchor (e.g. a Point's label sits centered above its marker, a Polygon's sits centered ON its
+ * centroid), not an independent choice draw() makes per feature. */
+export interface LabelAnchor {
+  point: XY;
+  textAlign: CanvasTextAlign;
+  textBaseline: CanvasTextBaseline;
+}
+
+/** Where (and how to align) a feature's billboard label, given its geometry, its resolved style
+ * (only pointRadius/icon/iconSize are read — label/labelColor are the caller's concern), and the
+ * same screen-transform matrix draw() itself uses. `undefined` means there is nothing sensible to
+ * anchor a label to (currently: only an empty LineString) — the caller should draw no label at all
+ * in that case, exactly like the geometry itself draws nothing. */
+export function computeLabelAnchor(geometry: Geometry, style: FeatureStyle, matrix: Mat2D): LabelAnchor | undefined {
+  switch (geometry.type) {
+    case 'Point': {
+      const p = transformCoordinate(geometry.coordinates, matrix);
+      // Half the on-screen size of whatever the point itself is actually drawn as (icon height, or
+      // circle radius) — same values draw()'s own Point case reads, so the label sits flush above
+      // the marker regardless of which one is in play.
+      const halfHeight = style.icon
+        ? (style.iconSize ?? getNaturalIconSize(style.icon))[1] / 2
+        : (style.pointRadius ?? POINT_RADIUS_PX);
+      return {
+        point: { x: p.x, y: p.y - halfHeight - LABEL_OFFSET_PX },
+        textAlign: 'center',
+        textBaseline: 'bottom'
+      };
+    }
+
+    case 'LineString': {
+      const points = transformRing(geometry.coordinates, matrix);
+      if (points.length === 0) return undefined; // nothing drawn => nothing to anchor a label to.
+      // MVP simplification, deliberate (not something to improve within this ticket): anchored at
+      // the vertex at the MIDDLE INDEX of the line's point list, not the point at half the line's
+      // actual path length — for an evenly-spaced line these agree, but for one with very uneven
+      // segment lengths they can differ noticeably. Good enough for the S-sized scope here.
+      const mid = points[Math.floor(points.length / 2)];
+      return { point: { x: mid.x, y: mid.y - LABEL_OFFSET_PX }, textAlign: 'center', textBaseline: 'bottom' };
+    }
+
+    case 'Polygon':
+    case 'MultiPolygon': {
+      // MVP simplification, deliberate (not something to improve within this ticket): only the
+      // OUTER ring of the FIRST polygon gets a label anchor — a Polygon's holes never affect it (a
+      // label centroid ignoring holes is a reasonable MVP choice, same spirit as the hole-oblivious
+      // bounding-box shortcuts elsewhere in this file), and a MultiPolygon's other parts get no
+      // label of their own at all. Proper multi-part label placement is out of scope here.
+      const outerRing = geometry.type === 'Polygon' ? geometry.coordinates[0] : geometry.coordinates[0]?.[0];
+      if (!outerRing || outerRing.length === 0) return undefined;
+
+      const screenRing = transformRing(outerRing, matrix);
+      // GeoJSON rings are closed (coordinates[0] === coordinates[n-1]): drop that duplicated closing
+      // point before averaging, or it would double-count the first vertex and skew the centroid
+      // toward it. A ring with only that one (degenerate) point left after dropping it has nothing
+      // to average — same "nothing to anchor to" outcome as the empty-LineString case above.
+      const n = screenRing.length > 1 ? screenRing.length - 1 : screenRing.length;
+      if (n === 0) return undefined;
+      let sumX = 0;
+      let sumY = 0;
+      for (let i = 0; i < n; i++) {
+        sumX += screenRing[i].x;
+        sumY += screenRing[i].y;
+      }
+      return { point: { x: sumX / n, y: sumY / n }, textAlign: 'center', textBaseline: 'middle' };
+    }
+  }
 }
 
 /// VectorLayer //////////////////////////////////////////////////////////////////////////////////
@@ -376,7 +486,36 @@ export class VectorLayer extends Layer {
           break;
         }
       }
+
+      // VEC-6: the label is drawn AFTER the feature's own geometry (shape first, label on top —
+      // same paint order as everything else in this file), and only when style resolved a non-
+      // empty label string; a feature with no `label` set draws nothing extra here at all.
+      if (style.label) {
+        const anchor = computeLabelAnchor(geometry, style, matrix);
+        if (anchor) {
+          // ctx.font/textAlign/textBaseline are canvas *state*, exactly like lineWidth/dash above
+          // (see that comment) — set unconditionally on every label rather than assumed left over
+          // from a previous feature or a previous layer's drawing.
+          ctx.font = LABEL_FONT;
+          ctx.fillStyle = style.labelColor ?? VECTOR_LAYER_LABEL_COLOR;
+          ctx.textAlign = anchor.textAlign;
+          ctx.textBaseline = anchor.textBaseline;
+          ctx.fillText(style.label, anchor.point.x, anchor.point.y);
+        }
+      }
     }
+
+    // VEC-6: ctx.font/textAlign/textBaseline are shared canvas *state* too, just like
+    // lineWidth/dash below — reset to the plain canvas defaults ('', 'start', 'alphabetic') so a
+    // layer drawn after this one doesn't inherit whatever the last label left behind. Unlike the
+    // lineWidth/dash reset (which fixes a real, already-hit cross-layer leak — see VEC-2's
+    // retrospective in BACKLOG.md), no such leak from THIS state is known to matter today —
+    // src/layers.ts's drawTileDebug/drawDebugInfo already set their own font/textAlign
+    // unconditionally before every use (confirmed via `grep` while building this ticket) — but the
+    // same discipline is applied here anyway, for whatever less careful layer comes next.
+    ctx.font = '';
+    ctx.textAlign = 'start';
+    ctx.textBaseline = 'alphabetic';
 
     // ctx.lineWidth/ctx.setLineDash are shared canvas *state*, not scoped to this draw() call —
     // the per-feature reset above (unconditional before every stroke()) only keeps features within

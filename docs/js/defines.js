@@ -22,6 +22,10 @@ export const COLOR_MAP = {
 export const VECTOR_LAYER_POINT_COLOR = 'rgb(220, 50, 50)';
 export const VECTOR_LAYER_LINE_COLOR = 'rgb(50, 90, 220)';
 export const VECTOR_LAYER_FILL_COLOR = 'rgba(50, 90, 220, 0.35)';
+// VEC-6: default color for a feature's billboard label (see FeatureStyle.labelColor in
+// vector_layer.ts) — kept here for the same "one place for the project's color constants" reason
+// as the three colors above.
+export const VECTOR_LAYER_LABEL_COLOR = 'rgb(20, 20, 20)';
 // `LocationDef`/`locations` used to live here, but they reference the live `map` instance and
 // `LAYERS` from index.ts/layers.ts — moved to index.ts (where both already exist locally) when
 // this file became a real ES module, to avoid a defines.ts <-> index.ts <-> layers.ts import
