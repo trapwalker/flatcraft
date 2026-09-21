@@ -4,14 +4,17 @@
 // camera once per draw() call into a single Mat2D — see computeLayerToScreenMatrix in map.ts).
 //
 // VEC-2 adds data-driven per-feature styling (fill/stroke/width/dash/icon, plus zoom-dependent
-// visibility via the style callback inspecting map.zoom_factor) on top of that. Still fixed-in-
-// advance, out of scope here (see BACKLOG.md, "Фаза 7"): any notion of a data *source* — static or
-// tiled (VEC-3a/b/c), hit-testing/click events (VEC-4), billboard labels (VEC-6), and the demo
-// wiring in src/layers.ts/src/index.ts (VEC-7). `features` below is therefore just a plain
-// in-memory array — VectorSource (VEC-3a) is a separate later abstraction, not anticipated here.
+// visibility via the style callback inspecting map.zoom_factor) on top of that.
+//
+// VEC-4 adds hit-testing (getFeatureAt: point-in-polygon, distance-to-segment, point/icon
+// bounding-box) and click/hover interactivity (enableFeatureEvents), working directly against
+// `this.features` — still just a plain in-memory array. Still fixed-in-advance, out of scope here
+// (see BACKLOG.md, "Фаза 7"): any notion of a data *source* — static or tiled (VEC-3a/b/c),
+// billboard labels (VEC-6), and the demo wiring in src/layers.ts/src/index.ts (VEC-7).
+// VectorSource (VEC-3a) is a separate later abstraction, not anticipated here.
 
 import type { Mat2D } from './mat2d.js';
-import { computeLayerToScreenMatrix, Layer } from './map.js';
+import { computeLayerToScreenMatrix, isTap, Layer } from './map.js';
 import type { LayerOptions, MapWidget } from './map.js';
 import { VECTOR_LAYER_FILL_COLOR, VECTOR_LAYER_LINE_COLOR, VECTOR_LAYER_POINT_COLOR } from './defines.js';
 
@@ -93,6 +96,13 @@ export interface VectorLayerOptions extends LayerOptions {
   // Omitted entirely => every feature renders exactly as VEC-1 did (see DEFAULT_STYLE_FN below) —
   // this is the ticket's regression contract, not a coincidence of the defaults picked.
   style?: FeatureStyleFn;
+  // VEC-4: fired from enableFeatureEvents below — set here (constructor time) but only actually
+  // wired up to map.canvas once enableFeatureEvents(map) is called explicitly. Neither is required:
+  // a layer with neither set can still call enableFeatureEvents (it just never calls anything).
+  onFeatureClick?: (feature: Feature, map: MapWidget) => void;
+  // `undefined` here specifically means "the cursor left every feature" (as opposed to "hovering
+  // nothing new to report") — see enableFeatureEvents's mousemove handler.
+  onFeatureHover?: (feature: Feature | undefined, map: MapWidget) => void;
 }
 
 // Fixed MVP visual size of a Point marker, in on-screen CSS pixels — NOT scaled by the layer/
@@ -100,6 +110,14 @@ export interface VectorLayerOptions extends LayerOptions {
 // this radius is applied afterwards, directly in screen space, the same way a marker/icon would
 // be in any other map library).
 const POINT_RADIUS_PX = 4;
+
+// VEC-4: floors on how small a click/hover target a feature can present, independent of how small
+// it's actually drawn. Without these, a feature styled with e.g. `pointRadius: 1` or a hairline
+// `lineWidth` would be effectively unclickable — real map libraries (Leaflet et al.) apply the same
+// kind of minimum hit-target padding for exactly this reason. Purely a hit-testing concept: neither
+// constant ever affects draw() above.
+const MIN_HIT_RADIUS_PX = 8; // minimum click radius around a Point, even if drawn smaller
+const MIN_LINE_HIT_TOLERANCE_PX = 5; // minimum click distance-to-line, even if drawn thinner
 
 // VEC-1's fixed behavior, preserved bit-for-bit as the per-geometry-type merge-in default for
 // whatever a feature's style leaves unset (see the switch in draw() below) — including when
@@ -126,7 +144,7 @@ const DEFAULT_STYLE_FN: FeatureStyleFn = () => ({});
  * back to [0, 0] for a source this MVP doesn't special-case (e.g. SVGImageElement/VideoFrame) —
  * such a source needs an explicit `iconSize` anyway, since there's no single reliable natural-size
  * field to read for it. */
-function getNaturalIconSize(icon: CanvasImageSource): [number, number] {
+export function getNaturalIconSize(icon: CanvasImageSource): [number, number] {
   if (typeof HTMLImageElement !== 'undefined' && icon instanceof HTMLImageElement) {
     return [icon.naturalWidth, icon.naturalHeight];
   }
@@ -176,6 +194,54 @@ export function getPolygonRingsScreenPoints(geometry: PolygonGeometry | MultiPol
   return rings;
 }
 
+/// Pure, DOM-free hit-test math (VEC-4) ///////////////////////////////////////////////////////////
+// Same split-out-for-testability reasoning as the coordinate math above: these never touch a
+// CanvasRenderingContext2D or a live MapWidget, so VectorLayer.getFeatureAt's per-geometry-type
+// logic can reuse them directly on already-screen-transformed points (see getFeatureAt below).
+
+/** Shortest distance from point `p` to the segment [a, b], in whatever units `p`/`a`/`b` share
+ * (screen pixels, in getFeatureAt's use). Degenerates to a plain point-to-point distance when `a`
+ * and `b` coincide (a zero-length segment), rather than dividing by zero. */
+export function distanceToSegment(p: XY, a: XY, b: XY): number {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const lengthSquared = abx * abx + aby * aby;
+  if (lengthSquared === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  // Project p onto the infinite line through a/b, then clamp the projection to the segment itself
+  // (t in [0, 1]) so the result is the distance to the nearest point ON the segment, not the line.
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby) / lengthSquared));
+  return Math.hypot(p.x - (a.x + t * abx), p.y - (a.y + t * aby));
+}
+
+/**
+ * Point-in-polygon test over a set of already screen-transformed rings — the same format
+ * getPolygonRingsScreenPoints returns — using the standard ray-casting algorithm under the
+ * `evenodd` rule: the SAME rule VectorLayer.draw fills with (`ctx.fill('evenodd')`), and
+ * deliberately reimplemented here rather than approximated some other way, specifically so
+ * hit-testing and rendering never disagree about where a shape "is". One pass sums crossings
+ * across EVERY ring passed in (outer rings and holes alike, and — for a MultiPolygon — every
+ * polygon's rings together) exactly like the single evenodd-filled path draw() builds, rather than
+ * testing each ring in isolation: that's what makes an odd number of ring-crossings (inside the
+ * shape) read as "inside" and an even number (e.g. inside an outer ring AND inside a hole cut into
+ * it) read as "outside", matching the fill exactly.
+ */
+export function pointInRings(p: XY, rings: XY[][]): boolean {
+  let inside = false;
+  for (const ring of rings) {
+    const n = ring.length;
+    if (n < 3) continue;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const a = ring[i];
+      const b = ring[j];
+      const straddles = a.y > p.y !== b.y > p.y;
+      if (straddles && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) {
+        inside = !inside;
+      }
+    }
+  }
+  return inside;
+}
+
 /// VectorLayer //////////////////////////////////////////////////////////////////////////////////
 export class VectorLayer extends Layer {
   features: Feature[];
@@ -183,11 +249,15 @@ export class VectorLayer extends Layer {
   // at all — see that constant's comment. Never `undefined` on the instance: draw() can always
   // just call `this.style(feature, map)` without an extra "is there a style fn" branch.
   style: FeatureStyleFn;
+  onFeatureClick?: (feature: Feature, map: MapWidget) => void;
+  onFeatureHover?: (feature: Feature | undefined, map: MapWidget) => void;
 
   constructor(options?: VectorLayerOptions) {
     super(options);
     this.features = (options && options.features && options.features.slice()) || [];
     this.style = (options && options.style) || DEFAULT_STYLE_FN;
+    this.onFeatureClick = options && options.onFeatureClick;
+    this.onFeatureHover = options && options.onFeatureHover;
   }
 
   addFeature(feature: Feature): void {
@@ -317,5 +387,141 @@ export class VectorLayer extends Layer {
     // the same class of leak as the per-feature case, just at this layer's own outer boundary.
     ctx.lineWidth = DEFAULT_LINE_WIDTH;
     ctx.setLineDash(DEFAULT_DASH);
+  }
+
+  /**
+   * VEC-4: which feature, if any, sits under `screenPoint` (actual canvas pixel coordinates,
+   * top-left origin — the same domain as `event.offsetX/offsetY` and MapWidget.screenToWorld's
+   * input). Compares in already screen-transformed space — the geometry is run through the exact
+   * same matrix/transform* helpers draw() uses, rather than inverting the matrix and comparing in
+   * this layer's local coordinates — specifically so hit-testing reuses code draw() already
+   * exercises instead of adding new, separately-tested inverse math.
+   *
+   * An invisible layer (`!this.visible`) never reports a hit — same "what's not drawn can't be
+   * clicked" contract as a feature whose own style() returns null/undefined below (this is also why
+   * this method calls `this.style(feature, map)` per feature, exactly like draw() does: a feature
+   * hidden by its own style at the current zoom is exactly as unclickable as one hidden by the
+   * layer being invisible altogether).
+   *
+   * Iterates `this.features` back-to-front: draw() paints features in array order, so the LAST one
+   * drawn is the one visually on top at any point two features overlap — checking from the end
+   * means the first hit found is also the topmost one, matching what's actually visible under the
+   * cursor.
+   */
+  getFeatureAt(screenPoint: XY, map: MapWidget): Feature | undefined {
+    if (!this.visible) return undefined;
+
+    const matrix = computeLayerToScreenMatrix(map.camera, this.transform, map.canvas.width, map.canvas.height);
+
+    for (let i = this.features.length - 1; i >= 0; i--) {
+      const feature = this.features[i];
+      const style = this.style(feature, map);
+      if (!style) continue; // not drawn this frame => not hittable, exactly like draw()'s own skip.
+
+      const geometry = feature.geometry;
+      switch (geometry.type) {
+        case 'Point': {
+          const p = transformCoordinate(geometry.coordinates, matrix);
+          if (style.icon) {
+            // Same top-left-corner math draw() uses for ctx.drawImage — a point is "hit" when the
+            // cursor falls inside the icon's on-screen bounding box, not just within some radius.
+            const [iw, ih] = style.iconSize ?? getNaturalIconSize(style.icon);
+            const left = p.x - iw / 2;
+            const top = p.y - ih / 2;
+            if (screenPoint.x >= left && screenPoint.x <= left + iw && screenPoint.y >= top && screenPoint.y <= top + ih) {
+              return feature;
+            }
+          } else {
+            const radius = Math.max(style.pointRadius ?? POINT_RADIUS_PX, MIN_HIT_RADIUS_PX);
+            if (Math.hypot(screenPoint.x - p.x, screenPoint.y - p.y) <= radius) return feature;
+          }
+          break;
+        }
+
+        case 'LineString': {
+          const points = transformRing(geometry.coordinates, matrix);
+          const tolerance = Math.max((style.lineWidth ?? DEFAULT_LINE_WIDTH) / 2, MIN_LINE_HIT_TOLERANCE_PX);
+          for (let j = 1; j < points.length; j++) {
+            if (distanceToSegment(screenPoint, points[j - 1], points[j]) <= tolerance) return feature;
+          }
+          break;
+        }
+
+        case 'Polygon':
+        case 'MultiPolygon': {
+          const rings = getPolygonRingsScreenPoints(geometry, matrix);
+          if (pointInRings(screenPoint, rings)) return feature;
+          break;
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * VEC-4: wires this layer's `onFeatureClick`/`onFeatureHover` (if any — either or both may be
+   * unset, in which case this just attaches listeners that never call anything) to live mouse
+   * events on `map.canvas`. Not called automatically anywhere — `Layer` has no "added to a map"
+   * lifecycle hook (deliberately out of MVP scope, see the class comment), and the constructor
+   * doesn't know about `map` at all — so a host that wants click/hover behavior must call this
+   * itself once the layer and map both exist, the same way DEMO-6 (src/index.ts) adds its own
+   * `document.addEventListener('keydown', ...)` alongside MapWidget's own internal handler rather
+   * than replacing it: these listeners coexist with whatever MapWidget.constructor already attached
+   * to this same canvas (pan/zoom/rotate), they don't touch or replace those.
+   *
+   * Hover fires `onFeatureHover` only when the feature under the cursor actually changes (by
+   * object reference, `undefined` included) — not on every mousemove over the same feature.
+   *
+   * Click deliberately does NOT use a plain 'click' listener: a native DOM click fires whenever
+   * mousedown and mouseup land on the same element, even if the mouse moved a lot in between (e.g.
+   * a drag-pan of the map) — unlike this file's touch handling, plain mouse movement doesn't
+   * suppress it on its own. Using 'click' directly would misfire a feature click after every
+   * drag-pan release. Instead this reuses `isTap` (src/map.ts) — the exact same duration/movement
+   * gate already used to distinguish a touch tap from a touch drag — measured between this
+   * listener's own mousedown and mouseup, so a real click (fast, near-stationary) fires
+   * onFeatureClick, while mouseup after a drag-pan does not. A click that lands on no feature
+   * simply calls nothing (unlike hover, there is no `undefined` "clicked on nothing" case).
+   *
+   * Returns an unsubscribe function that removes every listener this call added — ordinary cleanup
+   * hygiene, useful for tests and for any future caller (e.g. VEC-7) that needs to detach.
+   */
+  enableFeatureEvents(map: MapWidget): () => void {
+    let hoveredFeature: Feature | undefined;
+    let mouseDownStart: { time: number; pos: XY } | null = null;
+
+    const handleMouseMove = (e: MouseEvent): void => {
+      const feature = this.getFeatureAt({ x: e.offsetX, y: e.offsetY }, map);
+      if (feature !== hoveredFeature) {
+        hoveredFeature = feature;
+        if (this.onFeatureHover) this.onFeatureHover(feature, map);
+      }
+    };
+
+    const handleMouseDown = (e: MouseEvent): void => {
+      mouseDownStart = { time: performance.now(), pos: { x: e.offsetX, y: e.offsetY } };
+    };
+
+    const handleMouseUp = (e: MouseEvent): void => {
+      if (!mouseDownStart) return;
+      const pos = { x: e.offsetX, y: e.offsetY };
+      const duration = performance.now() - mouseDownStart.time;
+      const movement = Math.hypot(pos.x - mouseDownStart.pos.x, pos.y - mouseDownStart.pos.y);
+      mouseDownStart = null;
+      if (!isTap(duration, movement)) return; // a drag-pan's mouseup, not a real click.
+
+      const feature = this.getFeatureAt(pos, map);
+      if (feature && this.onFeatureClick) this.onFeatureClick(feature, map);
+    };
+
+    map.canvas.addEventListener('mousemove', handleMouseMove);
+    map.canvas.addEventListener('mousedown', handleMouseDown);
+    map.canvas.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      map.canvas.removeEventListener('mousemove', handleMouseMove);
+      map.canvas.removeEventListener('mousedown', handleMouseDown);
+      map.canvas.removeEventListener('mouseup', handleMouseUp);
+    };
   }
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Transform2D } from './transform2d.js';
 import { Mat2D } from './mat2d.js';
 import { computeLayerToScreenMatrix } from './map.js';
@@ -8,7 +8,9 @@ import {
   VectorLayer,
   transformCoordinate,
   transformRing,
-  getPolygonRingsScreenPoints
+  getPolygonRingsScreenPoints,
+  distanceToSegment,
+  pointInRings
 } from './vector_layer.js';
 import type {
   Feature,
@@ -102,6 +104,37 @@ function cameraFor(position: XY, zf: number, rotation = 0): Transform2D {
   camera.setScale(1 / zf);
   camera.rotation = rotation;
   return camera;
+}
+
+/** A DOM-free `map.canvas` stand-in for VectorLayer.enableFeatureEvents tests: a plain
+ * `Map<string, Set<Function>>` registry instead of a real `EventTarget`/`HTMLCanvasElement` (this
+ * project has no jsdom dependency — see createMockCtx's own comment on why every mock in this file
+ * is hand-built rather than reaching for a real DOM). `dispatch` calls every listener registered
+ * for a given event type synchronously, with whatever plain object stands in for the event (e.g.
+ * `{ offsetX, offsetY }` — a real MouseEvent's other fields are never read by enableFeatureEvents). */
+function fakeCanvas(width: number, height: number) {
+  const listeners = new Map<string, Set<(e: any) => void>>(); // eslint-disable-line @typescript-eslint/no-explicit-any
+  return {
+    width,
+    height,
+    addEventListener(type: string, cb: (e: any) => void): void { // eslint-disable-line @typescript-eslint/no-explicit-any
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type)!.add(cb);
+    },
+    removeEventListener(type: string, cb: (e: any) => void): void { // eslint-disable-line @typescript-eslint/no-explicit-any
+      listeners.get(type)?.delete(cb);
+    },
+    dispatch(type: string, event: unknown): void {
+      listeners.get(type)?.forEach((cb) => cb(event));
+    },
+    listenerCount(type: string): number {
+      return listeners.get(type)?.size ?? 0;
+    }
+  };
+}
+
+function fakeMapWithCanvas(ctx: CanvasRenderingContext2D, camera: Transform2D, canvas: ReturnType<typeof fakeCanvas>): MapWidget {
+  return { canvas, camera, ctx } as unknown as MapWidget;
 }
 
 /// Pure coordinate-math functions ////////////////////////////////////////////////////////////////
@@ -551,5 +584,319 @@ describe('VectorLayer.draw with a style callback', () => {
     layer.draw(fakeMap(ctx, camera, 800, 600));
 
     expect(calls.filter((c) => c.method === 'stroke')).toHaveLength(0);
+  });
+});
+
+/// distanceToSegment / pointInRings (DOM-free, VEC-4) ////////////////////////////////////////////
+
+describe('distanceToSegment (DOM-free)', () => {
+  it('is zero for a point that lies exactly on the segment', () => {
+    expect(distanceToSegment({ x: 5, y: 0 }, { x: 0, y: 0 }, { x: 10, y: 0 })).toBeCloseTo(0, 9);
+  });
+
+  it('measures the perpendicular distance when the closest point is strictly between the endpoints', () => {
+    expect(distanceToSegment({ x: 5, y: 3 }, { x: 0, y: 0 }, { x: 10, y: 0 })).toBeCloseTo(3, 9);
+  });
+
+  it('clamps to the nearest endpoint when the projection falls outside the segment', () => {
+    // Closest point on the (0,0)-(10,0) segment to (15, 4) is the endpoint (10, 0), not the
+    // infinite line's projection — distance is hypot(5, 4), not just 4.
+    expect(distanceToSegment({ x: 15, y: 4 }, { x: 0, y: 0 }, { x: 10, y: 0 })).toBeCloseTo(Math.hypot(5, 4), 9);
+  });
+
+  it('degenerates to point-to-point distance for a zero-length segment', () => {
+    expect(distanceToSegment({ x: 3, y: 4 }, { x: 0, y: 0 }, { x: 0, y: 0 })).toBeCloseTo(5, 9);
+  });
+});
+
+describe('pointInRings (DOM-free)', () => {
+  const square: XY[] = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+
+  it('a point inside a single ring is inside', () => {
+    expect(pointInRings({ x: 5, y: 5 }, [square])).toBe(true);
+  });
+
+  it('a point outside every ring is outside', () => {
+    expect(pointInRings({ x: 50, y: 50 }, [square])).toBe(false);
+  });
+
+  it('a point inside the outer ring but inside a hole ring is outside (evenodd across all rings)', () => {
+    const hole: XY[] = [{ x: 2, y: 2 }, { x: 8, y: 2 }, { x: 8, y: 8 }, { x: 2, y: 8 }];
+    expect(pointInRings({ x: 5, y: 5 }, [square, hole])).toBe(false);
+    // Still inside the outer ring, outside the hole -> inside the shape.
+    expect(pointInRings({ x: 1, y: 1 }, [square, hole])).toBe(true);
+  });
+});
+
+/// VectorLayer.getFeatureAt (DOM-free, VEC-4) /////////////////////////////////////////////////////
+// Identity camera + a 800x600 canvas puts geometry coordinate (x, y) at screen (400 + x, 300 + y) —
+// same convention already established by the VectorLayer.draw tests above.
+
+describe('VectorLayer.getFeatureAt', () => {
+  const identityCamera = () => cameraFor({ x: 0, y: 0 }, 1);
+  const map800x600 = () => fakeMap(createMockCtx().ctx, identityCamera(), 800, 600);
+
+  it('Point: hits dead center, and misses well outside the (floored) hit radius', () => {
+    const point: Feature<PointGeometry> = { id: 'p', geometry: { type: 'Point', coordinates: [0, 0] } };
+    const layer = new VectorLayer({ features: [point] });
+    const map = map800x600();
+
+    expect(layer.getFeatureAt({ x: 400, y: 300 }, map)).toBe(point);
+    expect(layer.getFeatureAt({ x: 500, y: 500 }, map)).toBeUndefined();
+  });
+
+  it('Point: MIN_HIT_RADIUS_PX floors the click target even when drawn with a much smaller pointRadius', () => {
+    const point: Feature<PointGeometry> = { id: 'p', geometry: { type: 'Point', coordinates: [0, 0] } };
+    // pointRadius 1 is drawn far smaller than MIN_HIT_RADIUS_PX (8) — a click 6px away misses the
+    // drawn circle but must still hit, because the click threshold floors at MIN_HIT_RADIUS_PX.
+    const layer = new VectorLayer({ features: [point], style: (): FeatureStyle => ({ pointRadius: 1 }) });
+    const map = map800x600();
+
+    expect(layer.getFeatureAt({ x: 406, y: 300 }, map)).toBe(point); // 6px away: within the floor
+    expect(layer.getFeatureAt({ x: 410, y: 300 }, map)).toBeUndefined(); // 10px away: beyond the floor
+  });
+
+  it('Point with icon: hits inside the centered icon bounding box, misses just outside it', () => {
+    const icon = fakeIcon(100, 100);
+    const point: Feature<PointGeometry> = { geometry: { type: 'Point', coordinates: [100, 50] } };
+    const layer = new VectorLayer({ features: [point], style: (): FeatureStyle => ({ icon, iconSize: [20, 10] }) });
+    const map = map800x600();
+
+    // Center at (500, 350); bbox is x in [490, 510], y in [345, 355].
+    expect(layer.getFeatureAt({ x: 495, y: 350 }, map)).toBe(point);
+    expect(layer.getFeatureAt({ x: 485, y: 350 }, map)).toBeUndefined(); // just left of the bbox
+  });
+
+  it('LineString: MIN_LINE_HIT_TOLERANCE_PX floors the click tolerance for a hairline-width line', () => {
+    const line: Feature<LineStringGeometry> = { id: 'l', geometry: { type: 'LineString', coordinates: [[0, 0], [100, 0]] } };
+    // Default lineWidth (1px) would give a geometric tolerance of 0.5px — floored to MIN_LINE_HIT_TOLERANCE_PX (5).
+    const layer = new VectorLayer({ features: [line] });
+    const map = map800x600();
+
+    expect(layer.getFeatureAt({ x: 450, y: 303 }, map)).toBe(line); // 3px away: within the floor
+    expect(layer.getFeatureAt({ x: 450, y: 309 }, map)).toBeUndefined(); // 9px away: beyond the floor
+  });
+
+  it('LineString: a wide lineWidth widens the tolerance beyond the floor', () => {
+    const line: Feature<LineStringGeometry> = { geometry: { type: 'LineString', coordinates: [[0, 0], [100, 0]] } };
+    const layer = new VectorLayer({ features: [line], style: (): FeatureStyle => ({ lineWidth: 20 }) });
+    const map = map800x600();
+
+    // Tolerance = max(20/2, 5) = 10.
+    expect(layer.getFeatureAt({ x: 450, y: 308 }, map)).toBe(line);
+    expect(layer.getFeatureAt({ x: 450, y: 315 }, map)).toBeUndefined();
+  });
+
+  it('Polygon with a hole: a click inside the hole misses despite being inside the outer ring\'s bounding box', () => {
+    const polygon: Feature<PolygonGeometry> = {
+      id: 'poly',
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [[-10, -10], [10, -10], [10, 10], [-10, 10]], // outer
+          [[-5, -5], [5, -5], [5, 5], [-5, 5]] // hole
+        ]
+      }
+    };
+    const layer = new VectorLayer({ features: [polygon] });
+    const map = map800x600();
+
+    expect(layer.getFeatureAt({ x: 400, y: 300 }, map)).toBeUndefined(); // center of the hole
+    expect(layer.getFeatureAt({ x: 407, y: 300 }, map)).toBe(polygon); // outside hole, inside outer
+    expect(layer.getFeatureAt({ x: 450, y: 450 }, map)).toBeUndefined(); // outside everything
+  });
+
+  it('MultiPolygon: a click inside any one of its polygons hits', () => {
+    const multi: Feature<MultiPolygonGeometry> = {
+      geometry: {
+        type: 'MultiPolygon',
+        coordinates: [
+          [[[0, 0], [4, 0], [4, 4], [0, 4]]],
+          [[[100, 100], [104, 100], [104, 104], [100, 104]]]
+        ]
+      }
+    };
+    const layer = new VectorLayer({ features: [multi] });
+    const map = map800x600();
+
+    expect(layer.getFeatureAt({ x: 402, y: 302 }, map)).toBe(multi); // inside the first polygon
+    expect(layer.getFeatureAt({ x: 502, y: 402 }, map)).toBe(multi); // inside the second polygon
+    expect(layer.getFeatureAt({ x: 450, y: 450 }, map)).toBeUndefined();
+  });
+
+  it('checks features back-to-front so the topmost (last-drawn) overlapping feature wins', () => {
+    const bottom: Feature<PointGeometry> = { id: 'bottom', geometry: { type: 'Point', coordinates: [0, 0] } };
+    const top: Feature<PointGeometry> = { id: 'top', geometry: { type: 'Point', coordinates: [0, 0] } };
+    const layer = new VectorLayer({ features: [bottom, top] });
+    const map = map800x600();
+
+    expect(layer.getFeatureAt({ x: 400, y: 300 }, map)).toBe(top);
+  });
+
+  it('a feature whose style returns null/undefined is not hittable, but a feature under it still is', () => {
+    const bottom: Feature<PointGeometry> = { id: 'bottom', geometry: { type: 'Point', coordinates: [0, 0] } };
+    const hidden: Feature<PointGeometry> = { id: 'hidden', geometry: { type: 'Point', coordinates: [0, 0] } };
+    const layer = new VectorLayer({
+      features: [bottom, hidden],
+      style: (feature): FeatureStyle | null => (feature.id === 'hidden' ? null : {})
+    });
+    const map = map800x600();
+
+    expect(layer.getFeatureAt({ x: 400, y: 300 }, map)).toBe(bottom);
+  });
+
+  it('an invisible layer never reports a hit, even dead center on a feature', () => {
+    const point: Feature<PointGeometry> = { geometry: { type: 'Point', coordinates: [0, 0] } };
+    const layer = new VectorLayer({ features: [point], visible: false });
+    const map = map800x600();
+
+    expect(layer.getFeatureAt({ x: 400, y: 300 }, map)).toBeUndefined();
+  });
+});
+
+/// VectorLayer.enableFeatureEvents (DOM-free, VEC-4) //////////////////////////////////////////////
+
+describe('VectorLayer.enableFeatureEvents', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function setup() {
+    const camera = cameraFor({ x: 0, y: 0 }, 1);
+    const canvas = fakeCanvas(800, 600);
+    const { ctx } = createMockCtx();
+    const map = fakeMapWithCanvas(ctx, camera, canvas);
+    return { canvas, map };
+  }
+
+  it('fires onFeatureHover only when the feature under the cursor actually changes', () => {
+    const featureA: Feature<PointGeometry> = { id: 'a', geometry: { type: 'Point', coordinates: [0, 0] } };
+    const featureB: Feature<PointGeometry> = { id: 'b', geometry: { type: 'Point', coordinates: [200, 0] } };
+    const onFeatureHover = vi.fn();
+    const layer = new VectorLayer({ features: [featureA, featureB], onFeatureHover });
+    const { canvas, map } = setup();
+    layer.enableFeatureEvents(map);
+
+    // Two mousemoves over the same feature (a): only one hover call.
+    canvas.dispatch('mousemove', { offsetX: 400, offsetY: 300 });
+    canvas.dispatch('mousemove', { offsetX: 401, offsetY: 300 });
+    expect(onFeatureHover).toHaveBeenCalledTimes(1);
+    expect(onFeatureHover).toHaveBeenLastCalledWith(featureA, map);
+
+    // Move onto feature b: a second call, with the new feature.
+    canvas.dispatch('mousemove', { offsetX: 600, offsetY: 300 });
+    expect(onFeatureHover).toHaveBeenCalledTimes(2);
+    expect(onFeatureHover).toHaveBeenLastCalledWith(featureB, map);
+
+    // Move off every feature: a third call with undefined.
+    canvas.dispatch('mousemove', { offsetX: 0, offsetY: 0 });
+    expect(onFeatureHover).toHaveBeenCalledTimes(3);
+    expect(onFeatureHover).toHaveBeenLastCalledWith(undefined, map);
+
+    // Staying off every feature: no further calls.
+    canvas.dispatch('mousemove', { offsetX: 1, offsetY: 1 });
+    expect(onFeatureHover).toHaveBeenCalledTimes(3);
+  });
+
+  it('a real click (fast, near-stationary) fires onFeatureClick for the feature under the cursor', () => {
+    const feature: Feature<PointGeometry> = { geometry: { type: 'Point', coordinates: [0, 0] } };
+    const onFeatureClick = vi.fn();
+    const layer = new VectorLayer({ features: [feature], onFeatureClick });
+    const { canvas, map } = setup();
+    layer.enableFeatureEvents(map);
+
+    const nowSpy = vi.spyOn(performance, 'now');
+    nowSpy.mockReturnValueOnce(1000);
+    canvas.dispatch('mousedown', { offsetX: 400, offsetY: 300 });
+    nowSpy.mockReturnValueOnce(1050); // 50ms later, well under TAP_MAX_DURATION_MS
+    canvas.dispatch('mouseup', { offsetX: 401, offsetY: 300 }); // 1px movement, well under the tap threshold
+
+    expect(onFeatureClick).toHaveBeenCalledTimes(1);
+    expect(onFeatureClick).toHaveBeenCalledWith(feature, map);
+  });
+
+  it('a click released after a drag-pan (long duration and/or movement) is NOT counted as a feature click', () => {
+    const feature: Feature<PointGeometry> = { geometry: { type: 'Point', coordinates: [0, 0] } };
+    const onFeatureClick = vi.fn();
+    const layer = new VectorLayer({ features: [feature], onFeatureClick });
+    const { canvas, map } = setup();
+    layer.enableFeatureEvents(map);
+
+    const nowSpy = vi.spyOn(performance, 'now');
+
+    // Case 1: long duration, mouse released back over the same feature.
+    nowSpy.mockReturnValueOnce(0);
+    canvas.dispatch('mousedown', { offsetX: 400, offsetY: 300 });
+    nowSpy.mockReturnValueOnce(2000); // 2s later — way past TAP_MAX_DURATION_MS
+    canvas.dispatch('mouseup', { offsetX: 400, offsetY: 300 });
+    expect(onFeatureClick).not.toHaveBeenCalled();
+
+    // Case 2: short duration, but the pointer was released far from where it went down (a
+    // drag-pan) — isTap measures movement between the recorded mousedown and this mouseup, the
+    // same start-vs-end convention the existing touch tap detection (isTap's other caller) uses.
+    nowSpy.mockReturnValueOnce(3000);
+    canvas.dispatch('mousedown', { offsetX: 400, offsetY: 300 });
+    nowSpy.mockReturnValueOnce(3050);
+    canvas.dispatch('mouseup', { offsetX: 700, offsetY: 300 });
+    expect(onFeatureClick).not.toHaveBeenCalled();
+  });
+
+  it('a click that lands on no feature calls nothing', () => {
+    const onFeatureClick = vi.fn();
+    const layer = new VectorLayer({ features: [], onFeatureClick });
+    const { canvas, map } = setup();
+    layer.enableFeatureEvents(map);
+
+    const nowSpy = vi.spyOn(performance, 'now');
+    nowSpy.mockReturnValueOnce(0);
+    canvas.dispatch('mousedown', { offsetX: 400, offsetY: 300 });
+    nowSpy.mockReturnValueOnce(10);
+    canvas.dispatch('mouseup', { offsetX: 400, offsetY: 300 });
+
+    expect(onFeatureClick).not.toHaveBeenCalled();
+  });
+
+  it('calling enableFeatureEvents with neither callback set does not throw', () => {
+    const layer = new VectorLayer({ features: [{ geometry: { type: 'Point', coordinates: [0, 0] } }] });
+    const { canvas, map } = setup();
+    expect(() => layer.enableFeatureEvents(map)).not.toThrow();
+
+    const nowSpy = vi.spyOn(performance, 'now');
+    nowSpy.mockReturnValueOnce(0);
+    canvas.dispatch('mousedown', { offsetX: 400, offsetY: 300 });
+    nowSpy.mockReturnValueOnce(10);
+    expect(() => {
+      canvas.dispatch('mouseup', { offsetX: 400, offsetY: 300 });
+      canvas.dispatch('mousemove', { offsetX: 400, offsetY: 300 });
+    }).not.toThrow();
+  });
+
+  it('the returned unsubscribe function removes every listener it added', () => {
+    const onFeatureClick = vi.fn();
+    const onFeatureHover = vi.fn();
+    const feature: Feature<PointGeometry> = { geometry: { type: 'Point', coordinates: [0, 0] } };
+    const layer = new VectorLayer({ features: [feature], onFeatureClick, onFeatureHover });
+    const { canvas, map } = setup();
+    const unsubscribe = layer.enableFeatureEvents(map);
+
+    expect(canvas.listenerCount('mousemove')).toBe(1);
+    expect(canvas.listenerCount('mousedown')).toBe(1);
+    expect(canvas.listenerCount('mouseup')).toBe(1);
+
+    unsubscribe();
+
+    expect(canvas.listenerCount('mousemove')).toBe(0);
+    expect(canvas.listenerCount('mousedown')).toBe(0);
+    expect(canvas.listenerCount('mouseup')).toBe(0);
+
+    const nowSpy = vi.spyOn(performance, 'now');
+    nowSpy.mockReturnValueOnce(0);
+    canvas.dispatch('mousedown', { offsetX: 400, offsetY: 300 });
+    nowSpy.mockReturnValueOnce(10);
+    canvas.dispatch('mouseup', { offsetX: 400, offsetY: 300 });
+    canvas.dispatch('mousemove', { offsetX: 400, offsetY: 300 });
+
+    expect(onFeatureClick).not.toHaveBeenCalled();
+    expect(onFeatureHover).not.toHaveBeenCalled();
   });
 });
