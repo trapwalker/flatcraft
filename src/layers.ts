@@ -534,16 +534,23 @@ const demoVectorFeatures: Feature[] = [
 // polygons the way there is for LineString). Icons (`icon`/`iconSize`) are deliberately unused —
 // there are no image assets in this project (docs/ has none) and that part of the VEC-2 API is
 // already covered by vector_layer.test.ts; adding one here just to add one isn't this ticket's job.
+//
+// VEC-6: every feature's already-existing `properties.label` (added for VEC-7, previously just
+// human-readable metadata nothing read) doubles as its on-map billboard label text — added while
+// independently verifying VEC-6, specifically to get a live, real-browser confirmation that labels
+// actually render (and stay upright/unrotated) on this page, not just in vector_layer.test.ts's
+// DOM-free mock.
 function demoVectorStyle(feature: Feature): FeatureStyle | null | undefined {
+  const label = feature.properties && (feature.properties.label as string | undefined);
   switch (feature.id) {
     case 'demo-point-default':
-      return {}; // every field falls back to VectorLayer's own default point style.
+      return { label }; // every other field falls back to VectorLayer's own default point style.
     case 'demo-point-styled':
-      return { fillStyle: 'rgb(20, 160, 140)', pointRadius: 10 };
+      return { fillStyle: 'rgb(20, 160, 140)', pointRadius: 10, label };
     case 'demo-line':
-      return { strokeStyle: 'rgb(255, 140, 0)', lineWidth: 3, dash: [10, 6] };
+      return { strokeStyle: 'rgb(255, 140, 0)', lineWidth: 3, dash: [10, 6], label };
     case 'demo-polygon-with-hole':
-      return { fillStyle: 'rgba(150, 40, 200, 0.35)', strokeStyle: 'rgb(110, 20, 150)', lineWidth: 2 };
+      return { fillStyle: 'rgba(150, 40, 200, 0.35)', strokeStyle: 'rgb(110, 20, 150)', lineWidth: 2, label };
     default:
       return {};
   }
