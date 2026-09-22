@@ -1233,9 +1233,18 @@ export class MapWidget { // todo: setup layers
    * fails `Number.isFinite`) are simply skipped, leaving whatever the widget's current value
    * already is untouched — this is what lets callers (STATE-3/DEMO-11's URL-hash restoration) feed
    * in a partial or old-format saved state without throwing or needing their own fallback logic.
-   * Instant, un-animated assignment (into `c` directly and into `zoom_target`/`rotation_target`,
-   * same as goToBookmark) — no FLY-4/jumpTo yet to animate this through, and STATE-3 explicitly
-   * doesn't want one for a page-load restore anyway.
+   *
+   * Genuinely instant, un-animated assignment — into `c` directly (via `locate()`) AND into the
+   * live `zoom_factor`/`rotation` fields, not just `zoom_target`/`rotation_target`. Direct user
+   * report (2026-09-22): a page reload restoring a saved zoom from the URL rendered at the
+   * WRONG zoom (whatever the constructor's own default, `zoom_factor = 1`, happens to be) and
+   * then visibly animated/mutated frame-by-frame to the correct one — this method's own doc
+   * comment already claimed "instant", but only ever set `zoom_target`/`rotation_target` (the
+   * *eased* fields' destination, drained by onRepaint's exponential smoothing over many frames —
+   * see MapWidget.onRepaint), identical to `goToBookmark`'s intentional "fly to" animation. That's
+   * the right feel for jumping to a bookmark mid-session; it's wrong for restoring where the user
+   * already was before a reload, which should look like nothing ever moved. `goToBookmark` has its
+   * own separate, still-eased assignment (`src/map.ts`) and is deliberately untouched by this fix.
    */
   deserializeState(state: Partial<SerializedMapState>): void {
     if (Number.isFinite(state.x) && Number.isFinite(state.y)) {
@@ -1243,9 +1252,11 @@ export class MapWidget { // todo: setup layers
     }
     if (Number.isFinite(state.zoom)) {
       this.zoom_target = state.zoom as number;
+      this.zoom_factor = state.zoom as number;
     }
     if (Number.isFinite(state.rotation)) {
       this.rotation_target = state.rotation as number;
+      this.rotation = state.rotation as number;
     }
   }
 
@@ -1512,6 +1523,21 @@ export class BufferedLayer extends Layer {
   protected drawContent(_ctx: CanvasRenderingContext2D, _unrotatedMatrix: Mat2D, _map: MapWidget, _bufferSize: number): void {
     // No-op by default — a subclass that never overrides this just blits a permanently empty
     // (fully transparent) buffer, which is a harmless, well-defined "draws nothing" layer.
+  }
+
+  // Forces the NEXT draw() call to rebuild the buffer regardless of whether zoom_factor/c/size
+  // actually changed. Direct user report (2026-09-22): a hard reload showed the background/grid
+  // immediately but no tiles at all, until the map was nudged — because zoom_factor/c genuinely
+  // don't change while a bunch of tile images are still loading asynchronously in the background
+  // (the common case for the first second or two after page load), the buffer built its ONE
+  // (empty) frame before any image arrived and then never rebuilt again on its own, even as every
+  // in-flight request resolved. A subclass whose content can change independently of camera state
+  // — TiledLayer (ROT-9) is the only one today, calling this whenever the set of tiles that
+  // actually have an image grows since the last rebuild — calls this to opt back into "redraw
+  // when my content changed" for exactly that case, without losing the camera-driven skip for a
+  // pure rotation gesture (untouched by this).
+  protected invalidateBuffer(): void {
+    this._builtZoom = null;
   }
 
   draw(map: MapWidget): void {
@@ -1853,6 +1879,11 @@ export class TiledLayer extends BufferedLayer {
   // needs rebuilding.
   private _frameTiles: TiledLayerFrameTile[] = [];
   private _frameWorldTileEdge = 0;
+  // How many of the currently-visible tiles had an image the last time the buffer was actually
+  // rebuilt — see draw()'s own comment on why this drives an extra invalidateBuffer() trigger
+  // beyond BufferedLayer's own zoom/c/size checks. -1: never built yet (matches the pre-any-load
+  // readyCount of 0 being different, so the very first frame always triggers correctly too).
+  private _lastBuildReadyCount = -1;
 
   constructor(options?: TiledLayerOptions) {
     super(options);
@@ -1966,8 +1997,20 @@ export class TiledLayer extends BufferedLayer {
       }
     }
 
-    // BufferedLayer.draw(): runs Layer.onDraw, and — only on frames where the camera actually
-    // panned/zoomed since last time (see BufferedLayer's own invalidation notes) — rebuilds the
+    // Direct user report (2026-09-22): on a hard reload, tiles never appeared at all — only the
+    // background/grid — until the map was nudged. BufferedLayer only rebuilds on its own when
+    // zoom_factor/c/size change; it has no way to notice a tile's async image arriving while the
+    // camera sits perfectly still (routine for the first second or two after load, with a screen's
+    // worth of tiles all mid-flight). Force a rebuild whenever the number of currently-visible
+    // tiles that actually have an image has grown since the buffer's last rebuild — monotonic for
+    // a static viewport (a loaded tile doesn't un-load), so this can only ever fire on genuinely
+    // new content, never spuriously on an already-fully-loaded, idle view.
+    const readyCount = this._frameTiles.reduce((n, t) => n + (t.tile && t.tile.image ? 1 : 0), 0);
+    if (readyCount !== this._lastBuildReadyCount) this.invalidateBuffer();
+    this._lastBuildReadyCount = readyCount;
+
+    // BufferedLayer.draw(): runs Layer.onDraw, and — only on frames where the camera panned/
+    // zoomed, the canvas resized, or invalidateBuffer() was just called above — rebuilds the
     // offscreen buffer via drawContent() below (consuming `_frameTiles` set just above), then
     // blits it (every frame) with the live rotation applied exactly once. Must run AFTER the loop
     // above: drawContent(), when it runs, does so synchronously from inside this call.
