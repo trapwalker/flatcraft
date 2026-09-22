@@ -597,7 +597,11 @@ export const LAYERS = {
         name: 'Map grid',
         tile_size: 256,
         color: 'rgba(60, 110, 60, 0.4)',
-        visible: true,
+        // Direct user request (2026-09-22): off by default — was on for every visitor, and its own
+        // lines land exactly on tile boundaries, easy to mistake for the subpixel-seam bug the grid
+        // is meant to help debug (this is literally what happened: see BACKLOG.md's reopened ROT-3).
+        // Toggle with KeyT (src/index.ts) or the "Map grid" checkbox in the Layers folder.
+        visible: false,
         z_max: 18, // todo: rename to z_deep
         onTileDraw: function (map, ix, iy, iz, x, y, tsize, _tile, gridMatrix) {
             const k = (tsize - 128) / 128;

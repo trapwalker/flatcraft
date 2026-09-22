@@ -1,7 +1,16 @@
-export const DEBUG = true;
+// Direct user request (2026-09-22): debug-info overlay off by default — was permanently on
+// (LAYERS.debug's visible: DEBUG, src/layers.ts), showing fps/pos/tile-cache stats to every
+// visitor of the demo page regardless of whether they're debugging anything. Toggle with KeyI
+// (src/index.ts) or the "Debug data" checkbox in the Layers folder, same as before.
+export const DEBUG = false;
 export const NC = '+'; // Node Code
+// Direct user request (2026-09-22): black by default, specifically so subpixel gaps between
+// tiles are visible against a maximally contrasting background without having to open the
+// Background Color picker first — see BACKLOG.md's reopened ROT-3 for why this contrast is the
+// actual precondition for seeing the seam bug at all (a mid-gray background like the old default
+// hides a ~1px gray hairline almost completely).
 // const BASE_COLOR = 'rgb(201, 180, 237)'; //'rgb(200, 255, 200)';
-export const BASE_COLOR = 'rgb(200, 200, 200)'; //'rgb(50, 50, 50)';//'rgb(200, 255, 200)';
+export const BASE_COLOR = 'rgb(0, 0, 0)'; //'rgb(200, 200, 200)'; //'rgb(50, 50, 50)';//'rgb(200, 255, 200)';
 export const COLOR_MAP = {
     'r': 'red',
     'y': 'yellow',
