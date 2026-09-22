@@ -1,5 +1,5 @@
 import { Vector } from './vector.js';
-import { MapWidget } from './map.js';
+import { BufferedLayer, MapWidget } from './map.js';
 import { LAYERS, ALL_LAYERS, ATTRIBUTIONS, MANDELBROT_TILE_SIZE, MANDELBROT_Z_MAX, MANDELBROT_BASE_Z } from './layers.js';
 import { BookmarkStore } from './bookmarks.js';
 // Bookmarks (DEMO-7, DEMO_BACKLOG.md) ============================================
@@ -283,6 +283,47 @@ let map;
         gui_bookmarks.add(addBookmarkHandle, 'addHere').name('Add bookmark here');
         rebuildBookmarksFolder();
         gui.close();
+        // Direct user request (2026-09-22, reopened ROT-3 investigation): triggers a browser download
+        // for `blob`, via the standard "temporary <a download> click" idiom — no server round-trip,
+        // works for any Blob already in hand (here, a canvas's own toBlob() output).
+        function saveBlob(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        }
+        // Direct user request: save the EXACT offscreen buffer bitmap every visible BufferedLayer
+        // (ROT-8, src/map.ts — TiledLayer/ImageOverlayLayer both extend it) currently composites
+        // tiles/sprites into, losslessly, to a real PNG file — specifically so this can be inspected
+        // byte-for-byte, bypassing the OS/GPU display compositor entirely (a screenshot goes through
+        // that; `canvas.toBlob('image/png')` reads the buffer's own backing store directly, same data
+        // `getImageData` would see). One file per visible buffered layer, named after `Layer.name`.
+        // Real cross-origin imagery with no CORS headers (the production OSM base layer, e.g.) taints
+        // its buffer — `exportBufferPNG()` rejects for those; reported via console.warn rather than
+        // thrown, so one tainted layer doesn't stop the others (map_grid, any future same-origin
+        // source, ...) from saving.
+        async function saveAllBufferPNGs() {
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+            for (const layer of ALL_LAYERS) {
+                if (!layer.visible || !(layer instanceof BufferedLayer))
+                    continue;
+                try {
+                    const blob = await layer.exportBufferPNG();
+                    if (!blob) {
+                        console.warn(`[KeyM] ${layer.name}: buffer is empty (nothing drawn yet)`);
+                        continue;
+                    }
+                    saveBlob(blob, `buffer-${layer.name}-${stamp}.png`);
+                }
+                catch (e) {
+                    console.warn(`[KeyM] ${layer.name}: could not export buffer (likely cross-origin-tainted, e.g. real map tiles with no CORS headers)`, e);
+                }
+            }
+        }
         // DEMO-6: demo-local hotkeys for demo-only layers the core (`MapWidget`, src/map.ts) doesn't
         // know by name — a separate `document.addEventListener('keydown', ...)` here rather than
         // touching that file (multiple `keydown` listeners on `document` coexist fine). Same "don't
@@ -293,6 +334,8 @@ let map;
         //   - KeyT: toggle map_grid/map_debug/xkcd_debug's `.visible` together, as ONE combined
         //     "tile debug overlay" state (a single press flips all three at once — the request asked
         //     for "grid and tile debug info" as one logical toggle, not three separate ones).
+        //   - KeyM: save every visible buffered layer's exact offscreen buffer bitmap to a PNG file
+        //     (see saveAllBufferPNGs above).
         //
         // A "reset rotation to 0" hotkey already exists in core (`Home` — MapWidget.resetRotationKeys)
         // — deliberately not duplicated here.
@@ -308,6 +351,9 @@ let map;
                 LAYERS.map_grid.visible = next;
                 LAYERS.map_debug.visible = next;
                 LAYERS.xkcd_debug.visible = next;
+            }
+            else if (e.code === 'KeyM') {
+                void saveAllBufferPNGs();
             }
         });
         // DEMO-3 (minimal slice): visible attribution text for every base layer whose ToU requires it

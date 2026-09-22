@@ -1207,6 +1207,26 @@ export class BufferedLayer extends Layer {
         screenCtx.drawImage(this._buffer, 0, 0);
         screenCtx.restore();
     }
+    // Direct user request (2026-09-22): a way to inspect the EXACT offscreen buffer bitmap this
+    // class composites tiles/sprites into — byte-for-byte, not a screenshot (which goes through the
+    // OS/GPU display compositor first, a completely different, separately-suspect step the user
+    // wants isolated out of the picture entirely). `canvas.toBlob('image/png')` is always lossless
+    // for PNG (no quality parameter applies) and reads the buffer's OWN backing store directly, the
+    // same data `getImageData` would see. Returns `null` if nothing has been drawn yet (`draw()`
+    // never ran). Throws whatever `toBlob` throws if the buffer is cross-origin-tainted (e.g. real
+    // XYZTileSource imagery with no CORS headers, like the production OSM base layer) -- expected
+    // and left for the caller to catch/report, not swallowed here.
+    exportBufferPNG() {
+        const buffer = this._buffer;
+        if (!buffer)
+            return Promise.resolve(null);
+        return new Promise((resolve, reject) => {
+            buffer.toBlob((blob) => resolve(blob), 'image/png');
+            // Some engines report a tainted canvas via a synchronous throw from toBlob() itself rather
+            // than (or in addition to) resolving null — nothing to do here; letting that exception
+            // propagate to the caller is correct, this callback only ever runs on success.
+        });
+    }
 }
 // AFF-4/VEC-1: the combined matrix mapping a point in this layer's own local drawing space to
 // actual canvas pixel coordinates — camera pan/zoom/rotation composed with this layer's own

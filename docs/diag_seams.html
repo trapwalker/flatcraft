@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Диагностика швов</title>
+<style>
+  html,body{margin:0;background:#000;font-family:sans-serif}
+  #workfield{width:100vw;height:100vh}
+  #hint{position:fixed;top:8px;left:8px;color:#0f0;background:rgba(0,0,0,0.6);padding:8px 12px;font-size:14px;z-index:9999;border-radius:4px}
+</style>
+</head>
+<body>
+<div id="hint">
+  Белые PNG-тайлы (256×256, без альфа-канала) на чёрном фоне, реальные файлы с диска (не canvas).<br>
+  Масштаб можно менять колесом мыши как обычно.<br>
+  <b>Нажми M</b> — сохранит ТОЧНОЕ содержимое офф-скрин буфера в PNG-файл (без сжатия с потерями, минуя скриншот/композитинг экрана).<br>
+  Пришли получившийся PNG-файл как есть (не скриншот его превью).
+</div>
+<div id="workfield"></div>
+<script type="module">
+import { MapWidget, TiledLayer, Layer, BufferedLayer } from './js/map.js';
+import { XYZTileSource } from './js/tile_source.js';
+
+// Every tile index resolves to the SAME real PNG file (256x256, RGB, colortype=2 -- no alpha
+// channel at all, so no pixel can ever be transparent) served over real HTTP -- the exact same
+// `new Image(); img.src = url` load path XYZTileSource uses for real map tiles
+// (src/tile_source.ts's fetchTile), just same-origin so the canvas is never cross-origin-tainted
+// and toBlob()/getImageData() work normally for inspection.
+const whitePngTiles = new XYZTileSource({
+  tile_size: 256,
+  urlTemplate: () => './_test_assets/white256.png'
+});
+
+const background = new Layer({
+  name: 'bg',
+  color: 'rgb(0,0,0)',
+  onDraw: function (map) {
+    map.ctx.fillStyle = this.options.color;
+    map.ctx.fillRect(0, 0, map.canvas.width, map.canvas.height);
+  }
+});
+
+const tiles = new TiledLayer({ name: 'white-png', tile_source: whitePngTiles, visible: true, z_max: 18 });
+
+const params = new URLSearchParams(location.search);
+const zoom = params.has('zoom') ? Number(params.get('zoom')) : 0.971105; // matches the live repro's own zoom by default
+const rotation = params.has('rot') ? (Number(params.get('rot')) * Math.PI) / 180 : 0;
+
+const map = new MapWidget('workfield', { layers: [background, tiles], location: { x: 0, y: 0 }, rotation });
+map.zoom_target = zoom;
+map.zoom_factor = zoom;
+window.__map = map;
+
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyM') {
+    tiles.exportBufferPNG().then((blob) => {
+      if (!blob) { console.warn('buffer empty'); return; }
+      saveBlob(blob, 'seam-diag-buffer-' + Date.now() + '.png');
+    });
+  }
+});
+</script>
+</body>
+</html>
