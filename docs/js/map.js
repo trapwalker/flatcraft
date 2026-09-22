@@ -1118,6 +1118,71 @@ export class Layer {
         }
     }
 }
+export class BufferedLayer extends Layer {
+    constructor(options) {
+        super(options);
+        this._buffer = null;
+        this._bufferCtx = null;
+        // What the buffer's current content was last built for — a plain equality/reference check
+        // against this frame's (zoom_factor, c, diag) below decides whether drawContent() needs to run
+        // again. Deliberately does NOT include `rotation` — that's the whole performance point (see the
+        // class doc comment above and the reopened ROT-3's historical-plan note): a pure rotation
+        // gesture, with pan/zoom untouched, costs one `drawImage` blit per frame, not a full rebuild.
+        this._builtZoom = null;
+        this._builtC = null;
+        this._createBufferCanvas = (options && options.createBufferCanvas) || (() => document.createElement('canvas'));
+    }
+    // Subclasses override this to draw their content into the offscreen buffer — `ctx` is the
+    // buffer's own 2D context (already `clearRect`-ed for this rebuild), `unrotatedMatrix` maps this
+    // layer's own local units to BUFFER PIXEL coordinates via translate+scale ONLY (see
+    // computeUnrotatedLayerToScreenMatrix) — never rotated; rotating anything drawn in here
+    // reintroduces the exact crack this class exists to avoid. `bufferSize` is the buffer's edge
+    // length in pixels (always square — see computeBufferDiag). Called only when the buffer's
+    // content actually needs rebuilding (see `_builtZoom`/`_builtC` above), not every frame.
+    drawContent(_ctx, _unrotatedMatrix, _map, _bufferSize) {
+        // No-op by default — a subclass that never overrides this just blits a permanently empty
+        // (fully transparent) buffer, which is a harmless, well-defined "draws nothing" layer.
+    }
+    draw(map) {
+        super.draw(map); // keeps Layer.onDraw support, same contract TiledLayer.draw() already had.
+        const w = map.canvas.width;
+        const h = map.canvas.height;
+        const diag = computeBufferDiag(w, h);
+        if (!this._buffer || this._buffer.width !== diag || this._buffer.height !== diag) {
+            // A fresh or resized canvas element starts blank (setting .width/.height on an existing
+            // <canvas> also clears it, same as a brand-new one) — forcing `_builtZoom = null` below
+            // guarantees the rebuild check further down always rebuilds after this, even if zoom_factor
+            // and c happen to numerically match whatever they were before the resize.
+            this._buffer = this._createBufferCanvas();
+            this._buffer.width = diag;
+            this._buffer.height = diag;
+            this._bufferCtx = this._buffer.getContext('2d');
+            this._builtZoom = null;
+        }
+        const c = map.c;
+        const needsRebuild = this._builtZoom !== map.zoom_factor ||
+            !this._builtC ||
+            this._builtC.x !== c.x ||
+            this._builtC.y !== c.y;
+        if (needsRebuild) {
+            const bufferCtx = this._bufferCtx;
+            bufferCtx.clearRect(0, 0, diag, diag);
+            const unrotatedMatrix = computeUnrotatedLayerToScreenMatrix(map.camera, this.transform, diag, diag);
+            this.drawContent(bufferCtx, unrotatedMatrix, map, diag);
+            this._builtZoom = map.zoom_factor;
+            this._builtC = { x: c.x, y: c.y };
+        }
+        // The one-and-only rotated draw per frame: the whole composited buffer, placed so its own
+        // center (which represents the same world point, `c`, that the real canvas's center does)
+        // lands exactly at the real canvas's center, rotated by the camera's live `rotation`.
+        const blit = computeBufferBlitMatrix(map.rotation, diag / 2, diag / 2, w / 2, h / 2);
+        const screenCtx = map.ctx;
+        screenCtx.save();
+        screenCtx.setTransform(blit.a, blit.b, blit.c, blit.d, blit.e, blit.f);
+        screenCtx.drawImage(this._buffer, 0, 0);
+        screenCtx.restore();
+    }
+}
 // AFF-4/VEC-1: the combined matrix mapping a point in this layer's own local drawing space to
 // actual canvas pixel coordinates — camera pan/zoom/rotation composed with this layer's own
 // shift/scale/rotation, as one Mat2D. This is the shared core of `computeTileGridMatrix` (which
@@ -1255,13 +1320,26 @@ export function computeTileIndexBounds(layerTransform, world_tile_edge, bounds) 
         maxY: maxY / world_tile_edge
     };
 }
-export class TiledLayer extends Layer {
+export class TiledLayer extends BufferedLayer {
     constructor(options) {
         super(options);
         // Debug-overlay support: how many tile slots this layer's draw() considered this frame
         // ((2*dx+1)*(2*dy+1)) — not how many actually have an image yet, just the size of the
         // currently-visible index range. Updated at the top of every draw() call.
         this.visible_tile_count = 0;
+        // ROT-9: this frame's already-fetched tiles, in visible-range order — set by draw() BEFORE it
+        // calls super.draw() (BufferedLayer), read back by drawContent() (called synchronously from
+        // within that same super.draw() call, but only on frames that actually rebuild the buffer — see
+        // BufferedLayer's own invalidation notes). This hand-off exists so drawContent() never calls
+        // tile_source.get() a second time for a tile draw()'s own onTileDraw loop already fetched this
+        // frame: get() has real, cumulative side effects (LOAD-8's requested_count/cache_hit_count, the
+        // debug overlay's "requested="/"hits=" — see src/tile_source.ts) that must fire exactly once per
+        // tile per frame, matching this class's behavior before this ticket. onTileDraw itself can't
+        // move into drawContent() to share one loop directly — onTileDraw needs to run EVERY frame (live
+        // rotated positions), while drawContent() only runs on the subset of frames the buffer actually
+        // needs rebuilding.
+        this._frameTiles = [];
+        this._frameWorldTileEdge = 0;
         this.tile_source = options && options.tile_source;
         this.tile_size = (options && options.tile_size) || (this.tile_source && this.tile_source.tile_size) || 0;
         this.onTileDraw = options && options.onTileDraw; // function(ix, iy, x, y, tile)
@@ -1277,46 +1355,27 @@ export class TiledLayer extends Layer {
         const tile_size = this.tile_size * k;
         const world_tile_edge = this.tile_size / Math.pow(2, z);
         // AFF-4: one matrix for the whole layer this frame, replacing the old per-tile
-        // `x*tile_size - c.x + w/2` arithmetic — see computeTileGridMatrix.
+        // `x*tile_size - c.x + w/2` arithmetic — see computeTileGridMatrix. Still built here (even
+        // though tile IMAGES no longer draw through it directly, post-ROT-9 — see BufferedLayer) for
+        // onTileDraw's own live, rotated placement (map_grid/map_debug/xkcd_debug/drawDebugInfo — see
+        // BufferedLayer's class doc comment for why those stay off the buffer).
         const gridMatrix = computeTileGridMatrix(map.camera, this.transform, w, h, world_tile_edge);
-        // ROT-3: the tile index range used to be derived as if the canvas were an axis-aligned,
-        // unrotated rectangle in tile-index space (center from `position`, half-extents from
-        // w/h/tile_size) — correct only at rotation 0. Once the camera is rotated, the actual
-        // world-space area the canvas covers is a *rotated* rectangle; its axis-aligned bounding box
-        // in tile-index space is wider/taller than the unrotated canvas (by up to sqrt(2) at 45°), so
-        // the old dx/dy under-covered it — tiles (and grid lines) near the canvas corners were never
-        // fetched or drawn, and the visible gap swings around as the rotation changes. Fixed by
-        // projecting the canvas's four actual corners through the inverse of the very same
-        // gridMatrix used below to place tiles (so this is guaranteed consistent with what actually
-        // gets drawn, camera *and* this layer's own transform included) and taking the bounding box
-        // of the results in tile-index space, instead of assuming an identity transform.
-        const inv = gridMatrix.invert();
-        const corners = [
-            inv.transformPoint({ x: 0, y: 0 }),
-            inv.transformPoint({ x: w, y: 0 }),
-            inv.transformPoint({ x: 0, y: h }),
-            inv.transformPoint({ x: w, y: h })
-        ];
-        let minX = corners[0].x, maxX = corners[0].x;
-        let minY = corners[0].y, maxY = corners[0].y;
-        for (let i = 1; i < corners.length; i++) {
-            if (corners[i].x < minX)
-                minX = corners[i].x;
-            if (corners[i].x > maxX)
-                maxX = corners[i].x;
-            if (corners[i].y < minY)
-                minY = corners[i].y;
-            if (corners[i].y > maxY)
-                maxY = corners[i].y;
-        }
-        // +1 tile of padding beyond the tight bounding box: the corners essentially never land
-        // exactly on a tile boundary, so without this, a corner tile that only partially overlaps
-        // the canvas (its index just past the ceil()/floor() cut) would be skipped, leaving a sliver
-        // gap right at the edge — visible as missing tiles precisely where ROT-3 matters most.
-        const tx = Math.round((minX + maxX) / 2);
-        const ty = Math.round((minY + maxY) / 2);
-        const dx = Math.ceil((maxX - minX) / 2) + 1;
-        const dy = Math.ceil((maxY - minY) / 2) + 1;
+        // ROT-9 (BACKLOG.md, reopened ROT-3): tile-index range, now derived from the same
+        // rotation-agnostic buffer diagonal BufferedLayer sizes its offscreen buffer with
+        // (computeBufferDiag), instead of the old ROT-3-range rotated-corner-projection (retired —
+        // see BACKLOG.md). `diag` is, by construction, >= the bounding box that projection would have
+        // produced for ANY rotation angle, so this simpler, axis-aligned radius is always at least as
+        // permissive — and unlike the old code, it never needs recomputing when only `rotation`
+        // changes (the buffer itself is always axis-aligned; only the final on-screen blit rotates).
+        const diag = computeBufferDiag(w, h);
+        const unrotatedMatrix = computeUnrotatedTileGridMatrix(map.camera, this.transform, diag, diag, world_tile_edge);
+        const centerIndex = unrotatedMatrix.invert().transformPoint({ x: diag / 2, y: diag / 2 });
+        const tx = Math.round(centerIndex.x);
+        const ty = Math.round(centerIndex.y);
+        // +1: same corner-padding rationale the old code had — the buffer's own edge essentially
+        // never lands exactly on a tile boundary.
+        const dx = Math.ceil(diag / 2 / tile_size) + 1;
+        const dy = dx; // the buffer is always square, so the radius is identical on both axes.
         // LAYER-6: clamp the *final* level (z_max offset already applied) into [zLevelMin, zLevelMax]
         // when either is set — z_max itself stays the untouched offset it always was (see its own
         // comment); this only bounds what comes out the other end. Unset (the default) means no
@@ -1336,13 +1395,13 @@ export class TiledLayer extends Layer {
             dx,
             dy,
             gridMatrix,
+            unrotatedMatrix,
             // LAYER-6: undefined when `bounds` isn't set — draw() only does the per-tile skip check
             // when this is present.
             tileIndexBounds: this.bounds ? computeTileIndexBounds(this.transform, world_tile_edge, this.bounds) : undefined
         };
     }
     draw(map) {
-        super.draw(map);
         const w = map.canvas.width; // todo: use property
         const h = map.canvas.height;
         const level_params = this.getLevelParams(map, w, h);
@@ -1355,6 +1414,8 @@ export class TiledLayer extends Layer {
         const gridMatrix = level_params.gridMatrix;
         const tileIndexBounds = level_params.tileIndexBounds;
         this.visible_tile_count = (2 * dx + 1) * (2 * dy + 1);
+        this._frameWorldTileEdge = level_params.world_tile_edge;
+        this._frameTiles = [];
         for (let y = ty - dy; y <= ty + dy; y++) {
             for (let x = tx - dx; x <= tx + dx; x++) {
                 // LAYER-6: a tile index square is [x, x+1) x [y, y+1) in index space (see
@@ -1367,70 +1428,54 @@ export class TiledLayer extends Layer {
                         y >= tileIndexBounds.maxY)) {
                     continue;
                 }
-                const topLeft = gridMatrix.transformPoint({ x, y });
-                this.tileDraw(map, x, y, z, topLeft.x, topLeft.y, tile_size, gridMatrix);
+                const tile = this.tile_source ? this.tile_source.get(x, y, z) : undefined;
+                this._frameTiles.push({ x, y, tile });
+                if (this.onTileDraw) {
+                    // ROT-9: still runs every frame, straight to the real screen through the LIVE (rotated)
+                    // gridMatrix — see BufferedLayer's own class doc comment for why debug/grid overlays
+                    // stay off the buffer entirely.
+                    const topLeft = gridMatrix.transformPoint({ x, y });
+                    this.onTileDraw(map, x, y, z, topLeft.x, topLeft.y, tile_size, tile, gridMatrix);
+                }
             }
         }
+        // BufferedLayer.draw(): runs Layer.onDraw, and — only on frames where the camera actually
+        // panned/zoomed since last time (see BufferedLayer's own invalidation notes) — rebuilds the
+        // offscreen buffer via drawContent() below (consuming `_frameTiles` set just above), then
+        // blits it (every frame) with the live rotation applied exactly once. Must run AFTER the loop
+        // above: drawContent(), when it runs, does so synchronously from inside this call.
+        super.draw(map);
         // LOAD-1: drive background preloading from whatever's actually on screen, instead of
         // requiring call sites to remember to invoke tile_source.heat() themselves (nothing did,
         // previously — see BACKLOG.md). r1 starts right at the visible edge, so the preload ring
-        // is the "next ring out" beyond what tileDraw() above already fetched directly.
+        // is the "next ring out" beyond what the loop above already fetched directly. Unchanged by
+        // ROT-9 — runs every frame regardless of whether the buffer itself was rebuilt.
         if (this.tile_source && isHeatableTileSource(this.tile_source)) {
             const r1 = Math.max(dx, dy);
             this.tile_source.heat(tx, ty, z, r1, r1 * 2);
         }
     }
-    // `gridMatrix`, when given, is used to draw the tile image through the canvas's actual
-    // transform (ctx.setTransform + a unit square at this tile's index) instead of a manually
-    // computed pixel rect — the AFF-4 rewrite. `x`/`y`/`tsize` stay in pixel coordinates regardless
-    // (precomputed by the caller from the same matrix) so `onTileDraw` consumers (drawTileDebug,
-    // map_grid's grid lines — see layers.ts) don't need to change: retrofitting them to draw in the
-    // layer's local (tile-index) units would also mean compensating ctx.font/ctx.lineWidth for the
-    // active scale (both are subject to the CTM same as any other drawing), for no benefit to
-    // debug/grid overlays that have no need to be rotation- or matrix-aware themselves.
-    tileDraw(map, ix, iy, iz, x, y, tsize, gridMatrix) {
-        let tile;
-        if (this.tile_source)
-            tile = this.tile_source.get(ix, iy, iz);
-        if (tile && tile.image) {
-            const ctx = map.ctx;
-            if (gridMatrix) {
-                // ZOOM-10: setTransform to `gridMatrix` AS-IS (its own e/f) and draw at the tile's raw
-                // index (ix, iy) — the original AFF-4 approach — bakes the *combined* translation
-                // (camera position folded in, tens of millions at this world's scale) into the canvas's
-                // internal transform. That CTM is stored in single precision by the browser's rasterizer
-                // (confirmed empirically — see BACKLOG.md), so at deep zoom (tile indices in the
-                // 10^5-10^6 range, translation to match) it loses several *device pixels* of accuracy —
-                // invisible while every frame rounds the same way, but the true (double-precision)
-                // translation is shifting by a fraction of a pixel every frame during any zoom easing or
-                // rotation, and each frame's rounding lands differently: the tile visibly trembles by a
-                // few pixels, at any zoom (worst at max, where translation magnitude — and so absolute
-                // rounding error — is largest) and independent of what's driving the change (wheel,
-                // keyboard, rotation all recompute this matrix every frame alike). The grid/debug
-                // overlays never had this problem because they compute each point in JS double precision
-                // (`gridMatrix.transformPoint`) and hand the rasterizer already-small screen coordinates
-                // directly, never a huge number baked into the CTM itself — see map_grid's onTileDraw.
-                //
-                // Fix: reuse `gridMatrix`'s linear part (a/b/c/d — its magnitude is always moderate,
-                // nowhere near float32's precision limit) but replace its translation with this tile's
-                // own precomputed on-screen top-left corner (`x`/`y`, already an ordinary screen-pixel
-                // value, computed the same way map_grid computes its corners) and draw at local (0,0)
-                // instead of (ix, iy). Mathematically identical placement (verified: local (0,0) maps to
-                // exactly (x, y), same as gridMatrix.transformPoint({x: ix, y: iy}) does) — the only
-                // change is which numbers the CTM itself has to carry.
-                ctx.save();
-                ctx.setTransform(gridMatrix.a, gridMatrix.b, gridMatrix.c, gridMatrix.d, x, y);
-                ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, 0, 0, 1, 1);
-                ctx.restore();
-            }
-            else {
-                // No matrix given (e.g. a direct call bypassing draw()) — same pixel-rect draw as before
-                // this change.
-                ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, x, y, tsize, tsize);
-            }
+    // ROT-9/ROT-8: draws this frame's already-fetched tile images (`_frameTiles`, set by draw()
+    // above) into the offscreen buffer, through `unrotatedMatrix` (buffer-pixel coordinates, no
+    // rotation — see BufferedLayer's class doc comment) composed with this layer's own
+    // tile-index-to-world scaling, the same way computeTileGridMatrix composes it for the live,
+    // rotated matrix.
+    drawContent(ctx, unrotatedMatrix, _map, _bufferSize) {
+        const bufferMatrix = unrotatedMatrix.multiply(Mat2D.scaling(this._frameWorldTileEdge, this._frameWorldTileEdge));
+        for (const { x, y, tile } of this._frameTiles) {
+            if (!tile || !tile.image)
+                continue;
+            // ZOOM-10 (carried forward verbatim in spirit — see the original comment's full reasoning,
+            // still accurate, in git history/BACKLOG.md): reuse `bufferMatrix`'s linear part (a/b/c/d —
+            // moderate magnitude, nowhere near float32's precision limit) but replace its translation
+            // with THIS tile's own small, precomputed buffer-local corner, and draw at local (0,0)
+            // instead of baking the combined (huge) tile index straight into the CTM.
+            const local = bufferMatrix.transformPoint({ x, y });
+            ctx.save();
+            ctx.setTransform(bufferMatrix.a, bufferMatrix.b, bufferMatrix.c, bufferMatrix.d, local.x, local.y);
+            ctx.drawImage(tile.image, 0, 0, this.tile_size, this.tile_size, 0, 0, 1, 1);
+            ctx.restore();
         }
-        if (this.onTileDraw)
-            this.onTileDraw(map, ix, iy, iz, x, y, tsize, tile, gridMatrix);
     }
 }
 //# sourceMappingURL=map.js.map

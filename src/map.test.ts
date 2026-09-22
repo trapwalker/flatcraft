@@ -539,18 +539,48 @@ describe('hasCrossedActivationThreshold (ZOOM-13)', () => {
 // the draw loop) — all optional and backward-compatible; a layer that sets none of them must
 // behave exactly as before (see the regression cases below).
 
+// ROT-9: a no-op 2D-context stand-in — used both as `fakeMap`'s own `map.ctx` (BufferedLayer.draw()
+// unconditionally blits the buffer onto it every frame, regardless of whether the buffer has any
+// real content — see its own doc comment) and, via fakeCanvas() below, as a TiledLayer's offscreen
+// buffer context. Plain no-ops are enough: none of the tests below inspect draw *calls*, only
+// which tile indices tile_source.get() was asked for (see trackingSource()).
+function fakeCtx(): CanvasRenderingContext2D {
+  return {
+    save: () => {},
+    restore: () => {},
+    setTransform: () => {},
+    drawImage: () => {},
+    clearRect: () => {}
+  } as unknown as CanvasRenderingContext2D;
+}
+
+// ROT-9: DOM-free stand-in for the offscreen buffer canvas BufferedLayer normally creates via
+// `document.createElement('canvas')` — this vitest suite runs under plain Node, not jsdom, so
+// there's no live `document` to call. Passed in as TiledLayerOptions.createBufferCanvas by the
+// tests below that actually call `.draw()` (the getLevelParams-only tests above never touch a
+// canvas at all, so they don't need this).
+function fakeCanvas(): HTMLCanvasElement {
+  return {
+    width: 0,
+    height: 0,
+    getContext: () => fakeCtx()
+  } as unknown as HTMLCanvasElement;
+}
+
 // Minimal MapWidget stand-in for getLevelParams()/draw(): both only ever touch zoom_factor,
-// camera and canvas.width/height (draw() also touches ctx, but only when a tile actually has an
-// image — none of the fake tile sources below ever hand back one, so a bare object is enough).
+// camera and canvas.width/height (draw() also touches ctx — see fakeCtx()'s own comment — plus,
+// since ROT-9, `c`/`rotation` too, via BufferedLayer.draw()'s own rebuild-check/blit).
 function fakeMap(position: XY, zf: number, width: number, height: number): MapWidget {
   const camera = new Transform2D();
   camera.setTranslation(position.x, position.y);
   camera.setScale(1 / zf);
   return {
     camera,
+    c: { x: position.x, y: position.y },
+    rotation: 0,
     zoom_factor: zf,
     canvas: { width, height },
-    ctx: {}
+    ctx: fakeCtx()
   } as unknown as MapWidget;
 }
 
@@ -617,7 +647,7 @@ describe('TiledLayer.draw — bounds excludes out-of-bounds tile indices (LAYER-
     const calls: Array<[number, number]> = [];
     const source = new TileSource({
       tile_size: TILE_SIZE,
-      onGet: (x, y) => { calls.push([x, y]); return null; } // no image -> tileDraw never touches ctx
+      onGet: (x, y) => { calls.push([x, y]); return null; } // no image -> drawContent's image draw never fires (onTileDraw/the buffer blit still run, against fakeCtx()'s no-ops)
     });
     return { source, calls };
   }
@@ -627,7 +657,8 @@ describe('TiledLayer.draw — bounds excludes out-of-bounds tile indices (LAYER-
     const layer = new TiledLayer({
       tile_source: source,
       tile_size: TILE_SIZE,
-      bounds: { minX: 0, minY: 0, maxX: 300, maxY: 300 } // tile-index [0,3) x [0,3)
+      bounds: { minX: 0, minY: 0, maxX: 300, maxY: 300 }, // tile-index [0,3) x [0,3)
+      createBufferCanvas: fakeCanvas // ROT-9: draw() now always builds/blits an offscreen buffer
     });
     // A big canvas relative to the tile size, centered inside `bounds`, so the ordinary visible
     // range comfortably extends past [0,3) x [0,3) in every direction — otherwise this test would
@@ -654,7 +685,7 @@ describe('TiledLayer.draw — bounds excludes out-of-bounds tile indices (LAYER-
 
   it('requests every visible tile, in and out of what would be `bounds`, when `bounds` is unset (regression)', () => {
     const { source, calls } = trackingSource();
-    const layer = new TiledLayer({ tile_source: source, tile_size: TILE_SIZE }); // no bounds
+    const layer = new TiledLayer({ tile_source: source, tile_size: TILE_SIZE, createBufferCanvas: fakeCanvas }); // no bounds
     const map = fakeMap({ x: 150, y: 150 }, 1, 1000, 1000);
 
     layer.draw(map);
