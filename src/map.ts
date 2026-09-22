@@ -2008,3 +2008,73 @@ export class TiledLayer extends BufferedLayer {
     }
   }
 }
+
+/// ImageOverlayLayer /////////////////////////////////////////////////////////////////////////////
+// ROT-10 (BACKLOG.md, reopened ROT-3): raster content that ISN'T a uniform tile grid — by direct
+// user request ("тайлы могут быть не только 256х256, возможно кроме них придётся рисовать на
+// карте произвольные спрайты, например гео-привязанные сканы карт"). Each `GeoSprite` places one
+// whole raster image at an explicit world-space position/size (and, optionally, its own rotation,
+// for a scan that isn't north-up) — the exact same seamless-composition contract `TiledLayer`
+// (ROT-9) uses (draw into the unrotated buffer, let `BufferedLayer` rotate the finished result
+// once), generalized from a regular grid cell to an arbitrary world-space quad.
+export interface GeoSprite {
+  image: CanvasImageSource;
+  // Native pixel dimensions of `image` — needed for the source-pixel -> world-unit scale factor
+  // below. Not read off `image` itself: `CanvasImageSource` is a broad union (HTMLImageElement,
+  // HTMLCanvasElement, ImageBitmap, VideoFrame, ...) without a uniformly-typed `.width`/`.height`
+  // pair across all of them, and — same reasoning `TiledLayer.tile_size` already uses — the
+  // caller placing a sprite already knows its own source dimensions, same as it already knows
+  // where the sprite is on the map.
+  imageWidth: number;
+  imageHeight: number;
+  // World-space position of the sprite's own top-left corner, BEFORE its own `rotation` below —
+  // same units as MapWidget.c/Vector (not lon/lat — there's no PROJ-* yet to convert real-world
+  // geo-referencing into this).
+  x: number;
+  y: number;
+  // World-space size the sprite is drawn at — independent of `imageWidth`/`imageHeight`, the same
+  // relationship a tile's `world_tile_edge` has to its native `tile_size`.
+  width: number;
+  height: number;
+  // Radians, clockwise (matches Mat2D.rotation's convention, the same one `MapWidget.rotation`
+  // uses) — this sprite's own rotation around its top-left corner, for a scan that isn't
+  // north-up. Default 0: axis-aligned in world space, same as an ordinary tile.
+  rotation?: number;
+}
+
+export interface ImageOverlayLayerOptions extends BufferedLayerOptions {
+  sprites?: GeoSprite[];
+}
+
+export class ImageOverlayLayer extends BufferedLayer {
+  sprites: GeoSprite[];
+
+  constructor(options?: ImageOverlayLayerOptions) {
+    super(options);
+    this.sprites = (options && options.sprites) || [];
+  }
+
+  protected drawContent(ctx: CanvasRenderingContext2D, unrotatedMatrix: Mat2D, _map: MapWidget, _bufferSize: number): void {
+    for (const sprite of this.sprites) {
+      // Source-image-pixel space -> world space: translate to the sprite's own position, apply
+      // its own rotation (around that same top-left corner), then scale native pixels up/down to
+      // the requested world-space size — the same "translate ∘ rotate ∘ scale" composition order
+      // Transform2D.localMatrix already uses everywhere else in this codebase.
+      const placement = Mat2D.translation(sprite.x, sprite.y)
+        .multiply(Mat2D.rotation(sprite.rotation || 0))
+        .multiply(Mat2D.scaling(sprite.width / sprite.imageWidth, sprite.height / sprite.imageHeight));
+      // World space -> buffer-pixel space, composed in JS double precision (ordinary Mat2D
+      // multiplication, not a canvas CTM) — same ZOOM-10 precision-safety property TiledLayer's
+      // per-tile draw relies on: however large `sprite.x`/`sprite.y` are (a real map location is
+      // typically in the tens of millions, same magnitude as `DEFAULT_START_POSITION` — see
+      // src/index.ts), `bufferMatrix`'s own translation comes out already small (relative to the
+      // current camera position, same as every tile's), safe to hand the rasterizer directly.
+      const bufferMatrix = unrotatedMatrix.multiply(placement);
+
+      ctx.save();
+      ctx.setTransform(bufferMatrix.a, bufferMatrix.b, bufferMatrix.c, bufferMatrix.d, bufferMatrix.e, bufferMatrix.f);
+      ctx.drawImage(sprite.image, 0, 0, sprite.imageWidth, sprite.imageHeight, 0, 0, sprite.imageWidth, sprite.imageHeight);
+      ctx.restore();
+    }
+  }
+}

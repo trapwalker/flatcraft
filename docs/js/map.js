@@ -1478,4 +1478,32 @@ export class TiledLayer extends BufferedLayer {
         }
     }
 }
+export class ImageOverlayLayer extends BufferedLayer {
+    constructor(options) {
+        super(options);
+        this.sprites = (options && options.sprites) || [];
+    }
+    drawContent(ctx, unrotatedMatrix, _map, _bufferSize) {
+        for (const sprite of this.sprites) {
+            // Source-image-pixel space -> world space: translate to the sprite's own position, apply
+            // its own rotation (around that same top-left corner), then scale native pixels up/down to
+            // the requested world-space size — the same "translate ∘ rotate ∘ scale" composition order
+            // Transform2D.localMatrix already uses everywhere else in this codebase.
+            const placement = Mat2D.translation(sprite.x, sprite.y)
+                .multiply(Mat2D.rotation(sprite.rotation || 0))
+                .multiply(Mat2D.scaling(sprite.width / sprite.imageWidth, sprite.height / sprite.imageHeight));
+            // World space -> buffer-pixel space, composed in JS double precision (ordinary Mat2D
+            // multiplication, not a canvas CTM) — same ZOOM-10 precision-safety property TiledLayer's
+            // per-tile draw relies on: however large `sprite.x`/`sprite.y` are (a real map location is
+            // typically in the tens of millions, same magnitude as `DEFAULT_START_POSITION` — see
+            // src/index.ts), `bufferMatrix`'s own translation comes out already small (relative to the
+            // current camera position, same as every tile's), safe to hand the rasterizer directly.
+            const bufferMatrix = unrotatedMatrix.multiply(placement);
+            ctx.save();
+            ctx.setTransform(bufferMatrix.a, bufferMatrix.b, bufferMatrix.c, bufferMatrix.d, bufferMatrix.e, bufferMatrix.f);
+            ctx.drawImage(sprite.image, 0, 0, sprite.imageWidth, sprite.imageHeight, 0, 0, sprite.imageWidth, sprite.imageHeight);
+            ctx.restore();
+        }
+    }
+}
 //# sourceMappingURL=map.js.map

@@ -12,9 +12,11 @@ import {
   computeUnrotatedTileGridMatrix,
   DEFAULT_BUFFER_SIZE_GRANULARITY,
   hasCrossedActivationThreshold,
+  ImageOverlayLayer,
   isDoubleTapContinuation,
   isTap,
   TiledLayer,
+  type GeoSprite,
   type MapWidget,
   type PendingTap,
   type WheelClassifyState
@@ -695,5 +697,185 @@ describe('TiledLayer.draw — bounds excludes out-of-bounds tile indices (LAYER-
     // Confirms the visible range genuinely reaches outside [0,3) x [0,3) — same range as the
     // bounded test above — so that test's exclusions are real, not vacuous.
     expect(calls.some(([x, y]) => x < 0 || x >= 3 || y < 0 || y >= 3)).toBe(true);
+  });
+});
+
+// ROT-10/ROT-11 (BACKLOG.md, reopened ROT-3): test infra for BufferedLayer subclasses. Two
+// separate contexts matter here, and conflating them is the easy mistake — `map.ctx` only ever
+// sees BufferedLayer's own final blit (buffer -> real screen, every frame); the actual per-tile/
+// per-sprite drawContent() calls land on the offscreen BUFFER's own context instead, which
+// `createBufferCanvas()` below controls. So: `fakeMap()`/`fakeCtx()` (already defined above, LAYER-6)
+// are enough for `map.ctx` (nothing here needs to inspect the final blit itself), while
+// `capturingBufferCanvas()` records what actually gets drawn INTO the buffer — that's the half
+// worth asserting on for both ImageOverlayLayer's placement math and BufferedLayer's invalidation.
+interface RecordedDraw {
+  matrix: Mat2D;
+  sw: number;
+  sh: number;
+}
+
+// A fresh capturing rig per test — `createBufferCanvas` hands back a brand-new fake canvas (with
+// its own fresh recording ctx) every time it's called, same as a real `document.createElement`
+// would, but every ctx it ever creates pushes into the SAME shared `draws` array (closed over),
+// so a test can just read `draws` after N draw() calls regardless of how many times
+// BufferedLayer actually reallocated the buffer canvas underneath (e.g. on a `diag` resize).
+function capturingBufferCanvas(): { createBufferCanvas: () => HTMLCanvasElement; draws: RecordedDraw[] } {
+  const draws: RecordedDraw[] = [];
+  const createBufferCanvas = (): HTMLCanvasElement => {
+    let current = Mat2D.identity();
+    const ctx = {
+      save: () => {},
+      restore: () => {},
+      setTransform: (a: number, b: number, c: number, d: number, e: number, f: number) => {
+        current = new Mat2D(a, b, c, d, e, f);
+      },
+      // drawImage(image, sx, sy, sw, sh, dx, dy, dw, dh) — only sw/sh (source width/height)
+      // matter to the tests below; everything else about the call is already implied by `current`.
+      drawImage: (_image: unknown, _sx: number, _sy: number, sw: number, sh: number) => {
+        draws.push({ matrix: current, sw, sh });
+      },
+      clearRect: () => {}
+    } as unknown as CanvasRenderingContext2D;
+    return { width: 0, height: 0, getContext: () => ctx } as unknown as HTMLCanvasElement;
+  };
+  return { createBufferCanvas, draws };
+}
+
+const fakeImage = (): CanvasImageSource => ({} as unknown as CanvasImageSource);
+
+describe('ImageOverlayLayer (ROT-10)', () => {
+  it('composes exactly unrotatedMatrix ∘ (translate ∘ rotate ∘ scale) for one axis-aligned sprite', () => {
+    const map = fakeMap({ x: 0, y: 0 }, 1, 1000, 1000);
+    const { createBufferCanvas, draws } = capturingBufferCanvas();
+    const sprite: GeoSprite = { image: fakeImage(), imageWidth: 512, imageHeight: 512, x: 100, y: 200, width: 50, height: 50 };
+    const layer = new ImageOverlayLayer({ createBufferCanvas, sprites: [sprite] });
+
+    layer.draw(map);
+
+    expect(draws.length).toBe(1);
+    expect(draws[0].sw).toBe(512);
+    expect(draws[0].sh).toBe(512);
+
+    const diag = computeBufferDiag(1000, 1000);
+    const unrotated = computeUnrotatedLayerToScreenMatrix(map.camera, layer.transform, diag, diag);
+    const placement = Mat2D.translation(sprite.x, sprite.y)
+      .multiply(Mat2D.rotation(0))
+      .multiply(Mat2D.scaling(sprite.width / sprite.imageWidth, sprite.height / sprite.imageHeight));
+    const expected = unrotated.multiply(placement);
+
+    expect(draws[0].matrix.equals(expected, 1e-9)).toBe(true);
+  });
+
+  it("applies the sprite's own rotation, independent of any camera rotation (which BufferedLayer already strips for buffer content — see ROT-7/ROT-8)", () => {
+    const map = fakeMap({ x: 0, y: 0 }, 1, 1000, 1000);
+    (map as unknown as { rotation: number }).rotation = 0.4;
+    map.camera.rotation = 0.4;
+    const { createBufferCanvas, draws } = capturingBufferCanvas();
+    const sprite: GeoSprite = { image: fakeImage(), imageWidth: 200, imageHeight: 100, x: 10, y: 20, width: 40, height: 20, rotation: 0.7 };
+    const layer = new ImageOverlayLayer({ createBufferCanvas, sprites: [sprite] });
+
+    layer.draw(map);
+
+    const diag = computeBufferDiag(1000, 1000);
+    const unrotated = computeUnrotatedLayerToScreenMatrix(map.camera, layer.transform, diag, diag);
+    const placement = Mat2D.translation(sprite.x, sprite.y)
+      .multiply(Mat2D.rotation(sprite.rotation as number))
+      .multiply(Mat2D.scaling(sprite.width / sprite.imageWidth, sprite.height / sprite.imageHeight));
+    const expected = unrotated.multiply(placement);
+
+    expect(draws[0].matrix.equals(expected, 1e-9)).toBe(true);
+  });
+
+  it('draws every sprite in the array, once each, in order', () => {
+    const map = fakeMap({ x: 0, y: 0 }, 1, 1000, 1000);
+    const { createBufferCanvas, draws } = capturingBufferCanvas();
+    const sprites: GeoSprite[] = [
+      { image: fakeImage(), imageWidth: 10, imageHeight: 10, x: 0, y: 0, width: 10, height: 10 },
+      { image: fakeImage(), imageWidth: 20, imageHeight: 30, x: 50, y: 50, width: 20, height: 30 },
+      { image: fakeImage(), imageWidth: 40, imageHeight: 40, x: -50, y: -50, width: 80, height: 80 }
+    ];
+    const layer = new ImageOverlayLayer({ createBufferCanvas, sprites });
+
+    layer.draw(map);
+
+    expect(draws.map((d) => [d.sw, d.sh])).toEqual([[10, 10], [20, 30], [40, 40]]);
+  });
+
+  it('draws nothing for an empty (default) sprite list', () => {
+    const map = fakeMap({ x: 0, y: 0 }, 1, 1000, 1000);
+    const { createBufferCanvas, draws } = capturingBufferCanvas();
+    const layer = new ImageOverlayLayer({ createBufferCanvas });
+
+    layer.draw(map);
+
+    expect(draws.length).toBe(0);
+  });
+});
+
+// ROT-8/ROT-11: the buffer-rebuild-skips-on-pure-rotation optimization BufferedLayer's own class
+// doc comment promises — checked here via ImageOverlayLayer (simpler fixture than TiledLayer, no
+// tile_source needed) rather than by reading private state: each rebuild draws the one sprite
+// exactly once into the BUFFER's own context (see capturingBufferCanvas's own comment on why
+// that's the context worth counting, not map.ctx), so `draws.length` after N draw() calls IS the
+// number of rebuilds that actually ran.
+describe('BufferedLayer — buffer rebuild only on pan/zoom, not on rotation alone (ROT-8)', () => {
+  function oneSpriteLayer(): { layer: ImageOverlayLayer; draws: RecordedDraw[] } {
+    const { createBufferCanvas, draws } = capturingBufferCanvas();
+    const layer = new ImageOverlayLayer({
+      createBufferCanvas,
+      sprites: [{ image: fakeImage(), imageWidth: 100, imageHeight: 100, x: 0, y: 0, width: 100, height: 100 }]
+    });
+    return { layer, draws };
+  }
+
+  it('the first draw() always builds (baseline)', () => {
+    const map = fakeMap({ x: 0, y: 0 }, 1, 1000, 1000);
+    const { layer, draws } = oneSpriteLayer();
+    layer.draw(map);
+    expect(draws.length).toBe(1);
+  });
+
+  it('a second draw() with nothing changed at all does not rebuild', () => {
+    const map = fakeMap({ x: 0, y: 0 }, 1, 1000, 1000);
+    const { layer, draws } = oneSpriteLayer();
+    layer.draw(map);
+    layer.draw(map);
+    expect(draws.length).toBe(1);
+  });
+
+  it('changing only rotation does not rebuild', () => {
+    const map = fakeMap({ x: 0, y: 0 }, 1, 1000, 1000);
+    const { layer, draws } = oneSpriteLayer();
+    layer.draw(map);
+    (map as unknown as { rotation: number }).rotation = 1.2;
+    layer.draw(map);
+    expect(draws.length).toBe(1);
+  });
+
+  it('changing zoom_factor rebuilds', () => {
+    const map = fakeMap({ x: 0, y: 0 }, 1, 1000, 1000);
+    const { layer, draws } = oneSpriteLayer();
+    layer.draw(map);
+    (map as unknown as { zoom_factor: number }).zoom_factor = 0.5;
+    layer.draw(map);
+    expect(draws.length).toBe(2);
+  });
+
+  it('changing camera position (c) rebuilds', () => {
+    const map = fakeMap({ x: 0, y: 0 }, 1, 1000, 1000);
+    const { layer, draws } = oneSpriteLayer();
+    layer.draw(map);
+    (map.c as { x: number }).x = 500;
+    layer.draw(map);
+    expect(draws.length).toBe(2);
+  });
+
+  it('resizing the real canvas (changing diag) rebuilds', () => {
+    const map = fakeMap({ x: 0, y: 0 }, 1, 1000, 1000);
+    const { layer, draws } = oneSpriteLayer();
+    layer.draw(map);
+    (map.canvas as { width: number }).width = 2000;
+    layer.draw(map);
+    expect(draws.length).toBe(2);
   });
 });
