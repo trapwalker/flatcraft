@@ -3,9 +3,14 @@ import { Transform2D } from './transform2d.js';
 import { Mat2D } from './mat2d.js';
 import {
   classifyWheelEvent,
+  computeBufferBlitMatrix,
+  computeBufferDiag,
   computeLayerToScreenMatrix,
   computeTileGridMatrix,
   computeTileIndexBounds,
+  computeUnrotatedLayerToScreenMatrix,
+  computeUnrotatedTileGridMatrix,
+  DEFAULT_BUFFER_SIZE_GRANULARITY,
   hasCrossedActivationThreshold,
   isDoubleTapContinuation,
   isTap,
@@ -223,6 +228,146 @@ describe('computeLayerToScreenMatrix', () => {
     const p = matrix.transformPoint({ x: 100, y: 0 });
     expect(p.x).toBeCloseTo(400, 6);
     expect(p.y).toBeCloseTo(200, 6);
+  });
+});
+
+// ROT-7 (BACKLOG.md, reopened ROT-3): the buffered-rotation redesign's core math — see
+// computeUnrotatedLayerToScreenMatrix/computeBufferBlitMatrix's own doc comments in map.ts for the
+// full derivation. The identity checked below (real rotated matrix == blit ∘ unrotated matrix) is
+// what the whole approach hinges on; if this ever fails, ROT-8/9/10's buffer compositing is
+// drawing the wrong thing.
+const ROTATIONS = [0, Math.PI / 6, -Math.PI / 4, 2.3, -1.1, Math.PI];
+
+describe('computeUnrotatedLayerToScreenMatrix (ROT-7)', () => {
+  it.each(CASES)('matches computeLayerToScreenMatrix when camera.rotation is already 0: $label', (c) => {
+    const camera = cameraFor(c.position, c.zf);
+    const layerTransform = new Transform2D();
+
+    const rotated = computeLayerToScreenMatrix(camera, layerTransform, c.w, c.h);
+    const unrotated = computeUnrotatedLayerToScreenMatrix(camera, layerTransform, c.w, c.h);
+
+    expect(unrotated.equals(rotated)).toBe(true);
+  });
+
+  it('ignores camera.rotation entirely — same output at 0 and at a large nonzero angle', () => {
+    const c = CASES[1];
+    const camera = cameraFor(c.position, c.zf);
+    const layerTransform = new Transform2D();
+
+    const atZero = computeUnrotatedLayerToScreenMatrix(camera, layerTransform, c.w, c.h);
+    camera.rotation = 2.7;
+    const atNonzero = computeUnrotatedLayerToScreenMatrix(camera, layerTransform, c.w, c.h);
+
+    expect(atNonzero.equals(atZero)).toBe(true);
+  });
+
+  it('still honors a nonzero layer transform (shift/scale), independent of camera rotation', () => {
+    const c = CASES[0];
+    const camera = cameraFor(c.position, c.zf);
+    camera.rotation = 1.2;
+    const layerTransform = new Transform2D();
+    layerTransform.setTranslation(500, -250);
+    layerTransform.setScale(3);
+
+    const matrix = computeUnrotatedLayerToScreenMatrix(camera, layerTransform, c.w, c.h);
+    const p = matrix.transformPoint({ x: 0, y: 0 });
+    // The layer-local origin, after the layer's own shift, lands at world (500, -250) — mapped to
+    // screen the same way any other world point would be, MINUS the camera's rotation (forced 0
+    // here) but still through its position/zoom.
+    const expected = computeLayerToScreenMatrix(cameraFor(c.position, c.zf), layerTransform, c.w, c.h)
+      .transformPoint({ x: 0, y: 0 });
+    expect(p.x).toBeCloseTo(expected.x, 6);
+    expect(p.y).toBeCloseTo(expected.y, 6);
+  });
+});
+
+describe('computeBufferBlitMatrix (ROT-7)', () => {
+  it('is the identity when rotation is 0 and from/to centers match', () => {
+    const m = computeBufferBlitMatrix(0, 400, 300, 400, 300);
+    expect(m.equals(Mat2D.identity())).toBe(true);
+  });
+
+  it('translates by (to - from) when rotation is 0 and the centers differ', () => {
+    const m = computeBufferBlitMatrix(0, 720, 720, 400, 300);
+    const p = m.transformPoint({ x: 100, y: 50 });
+    expect(p.x).toBeCloseTo(100 - 720 + 400, 9);
+    expect(p.y).toBeCloseTo(50 - 720 + 300, 9);
+  });
+
+  // The core identity this whole ticket series hinges on (see the doc comment on
+  // computeBufferBlitMatrix in map.ts): rendering "as if rotation were 0" into a buffer, then
+  // rotating the WHOLE buffer image once around its own center onto the screen, must land every
+  // point exactly where the ordinary rotated per-frame matrix would — for the buffer's own size
+  // (matching the real canvas, i.e. same from/to center) AND for a differently-sized buffer (the
+  // actual diag x diag case BufferedLayer uses).
+  it.each(CASES)('blit(rotation, w/2,h/2, w/2,h/2) ∘ unrotated == the real rotated matrix, same size: $label', (c) => {
+    for (const rotation of ROTATIONS) {
+      const camera = cameraFor(c.position, c.zf);
+      camera.rotation = rotation;
+      const layerTransform = new Transform2D();
+
+      const rotatedMatrix = computeLayerToScreenMatrix(camera, layerTransform, c.w, c.h);
+      const unrotated = computeUnrotatedLayerToScreenMatrix(camera, layerTransform, c.w, c.h);
+      const blit = computeBufferBlitMatrix(rotation, c.w / 2, c.h / 2, c.w / 2, c.h / 2);
+      const reconstructed = blit.multiply(unrotated);
+
+      expect(reconstructed.equals(rotatedMatrix, 1e-6)).toBe(true);
+    }
+  });
+
+  it.each(CASES)('same identity through a differently-sized (diag) buffer, as BufferedLayer actually uses it: $label', (c) => {
+    const diag = computeBufferDiag(c.w, c.h);
+    for (const rotation of ROTATIONS) {
+      const camera = cameraFor(c.position, c.zf);
+      camera.rotation = rotation;
+      const layerTransform = new Transform2D();
+
+      const rotatedMatrix = computeLayerToScreenMatrix(camera, layerTransform, c.w, c.h);
+      const unrotatedBuffer = computeUnrotatedLayerToScreenMatrix(camera, layerTransform, diag, diag);
+      const blit = computeBufferBlitMatrix(rotation, diag / 2, diag / 2, c.w / 2, c.h / 2);
+      const reconstructed = blit.multiply(unrotatedBuffer);
+
+      expect(reconstructed.equals(rotatedMatrix, 1e-5)).toBe(true);
+    }
+  });
+
+  it.each(CASES)('holds for computeTileGridMatrix / computeUnrotatedTileGridMatrix too (world_tile_edge folded in): $label', (c) => {
+    const diag = computeBufferDiag(c.w, c.h);
+    const z = Math.ceil(Math.log2(c.zf));
+    const world_tile_edge = c.tileSizeNative / Math.pow(2, z);
+    const rotation = Math.PI / 5;
+
+    const camera = cameraFor(c.position, c.zf);
+    camera.rotation = rotation;
+    const layerTransform = new Transform2D();
+
+    const rotatedTileMatrix = computeTileGridMatrix(camera, layerTransform, c.w, c.h, world_tile_edge);
+    const unrotatedTileMatrix = computeUnrotatedTileGridMatrix(camera, layerTransform, diag, diag, world_tile_edge);
+    const blit = computeBufferBlitMatrix(rotation, diag / 2, diag / 2, c.w / 2, c.h / 2);
+
+    expect(blit.multiply(unrotatedTileMatrix).equals(rotatedTileMatrix, 1e-5)).toBe(true);
+  });
+});
+
+describe('computeBufferDiag (ROT-8)', () => {
+  it('is at least the canvas diagonal (the whole point — a diag x diag square must cover the canvas at any rotation)', () => {
+    const cases: Array<[number, number]> = [[1280, 720], [100, 100], [1, 1000], [1999, 3]];
+    for (const [w, h] of cases) {
+      const diag = computeBufferDiag(w, h);
+      expect(diag).toBeGreaterThanOrEqual(Math.sqrt(w * w + h * h));
+    }
+  });
+
+  it('rounds up to a multiple of the granularity, exactly (30-40-50 triangle)', () => {
+    // sqrt(30^2 + 40^2) = 50 exactly, so with granularity 25 this should round to exactly 50 —
+    // no extra slack, a precise check that the rounding math itself is right, not just "big enough".
+    expect(computeBufferDiag(30, 40, 25)).toBe(50);
+  });
+
+  it('defaults to DEFAULT_BUFFER_SIZE_GRANULARITY when no granularity is given', () => {
+    const withDefault = computeBufferDiag(1280, 720);
+    const explicit = computeBufferDiag(1280, 720, DEFAULT_BUFFER_SIZE_GRANULARITY);
+    expect(withDefault).toBe(explicit);
   });
 });
 

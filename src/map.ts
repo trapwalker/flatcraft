@@ -1570,6 +1570,103 @@ export function computeTileGridMatrix(
     .multiply(Mat2D.scaling(world_tile_edge, world_tile_edge));
 }
 
+// ROT-7 (BACKLOG.md, reopened ROT-3): `computeLayerToScreenMatrix` above with `camera`'s rotation
+// forced to 0 — the "as if the camera were facing north" version, i.e. exactly what a layer draws
+// on screen today when `camera.rotation === 0` (the case ROT-3 already proved seamless: two
+// adjacent axis-aligned `drawImage` quads share a bit-identical edge coordinate, and Skia's
+// exact-rect fast path snaps/anti-aliases that edge identically for both, so no crack can appear
+// regardless of fractional zoom or camera position — see the reopened ROT-3 entry for the full
+// empirical writeup). `BufferedLayer` (ROT-8) targets this matrix at an offscreen buffer instead
+// of the real screen, so every seam-prone rotation happens exactly once, to the finished buffer
+// image as a whole, via `computeBufferBlitMatrix` below — never to individual tiles/sprites.
+//
+// Implemented as a same-position/scale, zero-rotation *sibling* `Transform2D` fed straight into
+// the existing function, rather than a new code path — cheaper to review (bugs in
+// `computeLayerToScreenMatrix` itself can't silently diverge between the two), and needs no
+// `rotationOverride` parameter threaded through every caller. Preserves `camera.parent` (always
+// null for `MapWidget.camera` today, but this stays correct if that ever changes — e.g. a future
+// `VP-*` nested viewport camera).
+export function computeUnrotatedLayerToScreenMatrix(
+  camera: Transform2D,
+  layerTransform: Transform2D,
+  canvasWidth: number,
+  canvasHeight: number
+): Mat2D {
+  const unrotatedCamera = new Transform2D(camera.parent);
+  unrotatedCamera.setTranslation(camera.x, camera.y);
+  unrotatedCamera.setScale(camera.scaleX, camera.scaleY);
+  return computeLayerToScreenMatrix(unrotatedCamera, layerTransform, canvasWidth, canvasHeight);
+}
+
+// ROT-7: `computeUnrotatedLayerToScreenMatrix` above, plus the same tile-index-to-world-units
+// scaling `computeTileGridMatrix` adds to `computeLayerToScreenMatrix` — the buffer-space
+// counterpart `TiledLayer` (ROT-9) composites its tiles through.
+export function computeUnrotatedTileGridMatrix(
+  camera: Transform2D,
+  layerTransform: Transform2D,
+  canvasWidth: number,
+  canvasHeight: number,
+  world_tile_edge: number
+): Mat2D {
+  return computeUnrotatedLayerToScreenMatrix(camera, layerTransform, canvasWidth, canvasHeight)
+    .multiply(Mat2D.scaling(world_tile_edge, world_tile_edge));
+}
+
+// ROT-7: "rotate the whole picture by `rotation`, around its own center point" — i.e. exactly the
+// rotation `computeLayerToScreenMatrix` folds into every individual tile/sprite today, factored
+// out into its own matrix so `BufferedLayer` (ROT-8) can apply it ONCE, to an already-composited
+// buffer image, instead. `fromCenter` is the buffer's own center in buffer-pixel coordinates
+// (`diag/2, diag/2` — see `computeBufferDiag`); `toCenter` is where that center should land on
+// the real screen (`canvas.width/2, canvas.height/2`) — kept as two separate points, not one,
+// since the buffer is deliberately NOT the same size as the real canvas (see `computeBufferDiag`).
+//
+// Angle sign matches `computeLayerToScreenMatrix`'s own convention (`camera.worldMatrix.invert()`
+// applies `rotate(-rotation)` — see `MapWidget.rotateBy`'s doc comment: increasing `rotation`
+// turns displayed content counter-clockwise) — verified algebraically, not just by inference: for
+// `fromCenter === toCenter`,
+//
+//   computeBufferBlitMatrix(rotation, cx, cy, cx, cy).multiply(computeUnrotatedLayerToScreenMatrix(...))
+//     === computeLayerToScreenMatrix(camera, ...)   (camera.rotation === rotation)
+//
+// exactly — because `camera.worldMatrix`'s scale is isotropic (`scaleX === scaleY`, true for both
+// `MapWidget.camera` and every `Layer.transform` today — `Transform2D.setScale`'s own default
+// `sy = sx` means nothing in this codebase ever sets them unequal), which commutes with rotation;
+// see map.test.ts's ROT-7 tests for the identity checked both at matching and at mismatched
+// from/to centers (the actual `diag`-buffer-vs-real-canvas case `BufferedLayer` uses). If a
+// non-isotropic camera or layer scale is ever introduced, this factorization breaks and the whole
+// buffered-rotation approach (ROT-8/9/10) needs revisiting.
+export function computeBufferBlitMatrix(
+  rotation: number,
+  fromCenterX: number,
+  fromCenterY: number,
+  toCenterX: number,
+  toCenterY: number
+): Mat2D {
+  return Mat2D.translation(toCenterX, toCenterY)
+    .multiply(Mat2D.rotation(-rotation))
+    .multiply(Mat2D.translation(-fromCenterX, -fromCenterY));
+}
+
+// ROT-8: edge length (device px) of the square offscreen buffer `BufferedLayer` composites into.
+// A square of this size, rotated by ANY angle around its own center and overlaid so that center
+// coincides with the real canvas's center, is guaranteed to fully cover a `canvasWidth x
+// canvasHeight` real canvas — because every point of that real canvas is within
+// `sqrt(canvasWidth^2 + canvasHeight^2) / 2` of its own center, i.e. within the circle the square
+// circumscribes. This is the "запас на диагональ" from ROT-3's original (historical) buffer plan,
+// and it's rotation-agnostic by construction — no rotated-corner-projection (the old ROT-3-range)
+// needed to size it. Rounded UP to the nearest `granularity` device px so ordinary sub-pixel or
+// small layout-driven canvas resizes don't reallocate/rebuild the buffer canvas every frame.
+export const DEFAULT_BUFFER_SIZE_GRANULARITY = 32;
+
+export function computeBufferDiag(
+  canvasWidth: number,
+  canvasHeight: number,
+  granularity: number = DEFAULT_BUFFER_SIZE_GRANULARITY
+): number {
+  const diag = Math.sqrt(canvasWidth * canvasWidth + canvasHeight * canvasHeight);
+  return Math.ceil(diag / granularity) * granularity;
+}
+
 // LAYER-6: converts `bounds` (a rect in shared *world* units — see WorldBounds) into the
 // equivalent rect in this layer's tile-*index* space (one unit = one tile — the same space
 // tx/ty/dx/dy and the draw() loop's ix/iy already live in), so draw() can cheaply test each
